@@ -16,7 +16,7 @@ juce_add_gui_app(quadnoncortex
     PRODUCT_NAME "quadnoncortex"
     COMPANY_NAME "quadnoncortex"
     BUNDLE_ID    "com.quadnoncortex.app"
-    ICON_BIG     ""
+    VERSION      "1.0.0"
     NEEDS_CURL   FALSE
     NEEDS_WEB_BROWSER FALSE
 )
@@ -45,6 +45,8 @@ target_sources(quadnoncortex
         Source/TunerComponent.h
         Source/TunerComponent.cpp
         Source/AppSettings.h
+        Source/Theme.h
+        Source/OnScreenKeyboard.h
         Source/SettingsComponent.h
         Source/SettingsComponent.cpp
 )

@@ -40,14 +40,15 @@ public:
         if (! f.existsAsFile()) return;
         if (auto xml = juce::XmlDocument::parse (f))
         {
-            if (auto* audio = xml->getChildByName ("DEVICESETUP"))
-                audioDeviceStateXml = std::make_unique<juce::XmlElement> (*audio);
-            else if (auto* audio = xml->getChildByName ("AudioDeviceState"))
-                audioDeviceStateXml = std::make_unique<juce::XmlElement> (*audio);
+            if (auto* dev = xml->getChildByName ("DEVICESETUP"))
+                audioDeviceStateXml = std::make_unique<juce::XmlElement> (*dev);
+            else if (auto* dev = xml->getChildByName ("AudioDeviceState"))
+                audioDeviceStateXml = std::make_unique<juce::XmlElement> (*dev);
 
             inputGain  = (float) xml->getDoubleAttribute ("inputGain",  1.0);
             outputGain = (float) xml->getDoubleAttribute ("outputGain", 1.0);
             lastPreset = xml->getStringAttribute ("lastPreset");
+            themeName = xml->getStringAttribute ("theme", "Dark");
 
             globalMidiMaps.clear();
             if (auto* maps = xml->getChildByName ("GlobalMidiMaps"))
@@ -55,6 +56,17 @@ public:
                     if (e->hasTagName ("Map"))
                         globalMidiMaps[e->getStringAttribute ("action")]
                             = e->getStringAttribute ("binding");
+
+            midiInputEnabled.clear();
+            midiInputsLoaded = false;
+            if (auto* midis = xml->getChildByName ("MidiInputs"))
+            {
+                midiInputsLoaded = true;
+                for (auto* e : midis->getChildIterator())
+                    if (e->hasTagName ("Input"))
+                        midiInputEnabled[e->getStringAttribute ("id")]
+                            = e->getBoolAttribute ("enabled", true);
+            }
         }
     }
 
@@ -66,6 +78,7 @@ public:
         root.setAttribute ("inputGain",  inputGain);
         root.setAttribute ("outputGain", outputGain);
         root.setAttribute ("lastPreset", lastPreset);
+        root.setAttribute ("theme", themeName);
 
         auto* maps = root.createNewChildElement ("GlobalMidiMaps");
         for (auto& p : globalMidiMaps)
@@ -73,6 +86,14 @@ public:
             auto* e = maps->createNewChildElement ("Map");
             e->setAttribute ("action", p.first);
             e->setAttribute ("binding", p.second);
+        }
+
+        auto* midis = root.createNewChildElement ("MidiInputs");
+        for (auto& p : midiInputEnabled)
+        {
+            auto* e = midis->createNewChildElement ("Input");
+            e->setAttribute ("id", p.first);
+            e->setAttribute ("enabled", p.second ? 1 : 0);
         }
 
         root.writeTo (getSettingsFile());
@@ -88,7 +109,28 @@ public:
     float inputGain  = 1.0f;
     float outputGain = 1.0f;
     juce::String lastPreset;
+    juce::String themeName { "Dark" };
     std::map<juce::String, juce::String> globalMidiMaps;
+    /** identifier → enabled. Missing devices kept until next explicit save. */
+    std::map<juce::String, bool> midiInputEnabled;
+    bool midiInputsLoaded = false;
+
+    void setMidiInputEnabled (const juce::String& id, bool en)
+    {
+        midiInputEnabled[id] = en;
+    }
+
+    /** On SAVE: drop ids that are no longer present on the system. */
+    void pruneMidiInputs (const juce::StringArray& currentlyPresentIds)
+    {
+        for (auto it = midiInputEnabled.begin(); it != midiInputEnabled.end(); )
+        {
+            if (! currentlyPresentIds.contains (it->first))
+                it = midiInputEnabled.erase (it);
+            else
+                ++it;
+        }
+    }
 
 private:
     AppSettings() { load(); }

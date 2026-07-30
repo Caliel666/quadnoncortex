@@ -1,4 +1,5 @@
 #include "ParameterPanel.h"
+#include "Theme.h"
 
 ParameterPanel::ParamRow::ParamRow (int paramIdx, juce::AudioProcessorParameter* param,
                                     MidiLearnManager& mgr, int pluginIdx)
@@ -6,11 +7,11 @@ ParameterPanel::ParamRow::ParamRow (int paramIdx, juce::AudioProcessorParameter*
 {
     nameLabel.setText (param->getName (48), juce::dontSendNotification);
     nameLabel.setFont (juce::FontOptions (16.0f, juce::Font::bold));
-    nameLabel.setColour (juce::Label::textColourId, juce::Colours::white);
+    nameLabel.setColour (juce::Label::textColourId, Theme::get().text);
     addAndMakeVisible (nameLabel);
 
     valueLabel.setFont (juce::FontOptions (14.0f));
-    valueLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    valueLabel.setColour (juce::Label::textColourId, Theme::get().textDim);
     valueLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (valueLabel);
 
@@ -116,17 +117,21 @@ void ParameterPanel::ParamRow::updateLearnButton()
 
 void ParameterPanel::ParamRow::paint (juce::Graphics& g)
 {
-    g.setColour (juce::Colour (0xff1a1a1a));
-    g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (3.0f), 12.0f);
+    auto& th = Theme::get();
+    auto r = getLocalBounds().toFloat().reduced (3.0f);
+    g.setColour (th.card);
+    g.fillRoundedRectangle (r, 14.0f);
+    g.setColour (th.border.withAlpha (0.45f));
+    g.drawRoundedRectangle (r, 14.0f, 1.0f);
 }
 
 void ParameterPanel::ParamRow::resized()
 {
     auto r = getLocalBounds().reduced (10, 8);
     const int btnY = r.getY() + (r.getHeight() - 36) / 2;
-    clearMidiButton.setBounds (r.removeFromRight (36).withHeight (36).withY (btnY));
-    r.removeFromRight (4);
-    learnButton.setBounds (r.removeFromRight (72).withHeight (36).withY (btnY));
+    clearMidiButton.setBounds (r.removeFromRight (44).withHeight (40).withY (btnY));
+    r.removeFromRight (6);
+    learnButton.setBounds (r.removeFromRight (88).withHeight (40).withY (btnY));
     r.removeFromRight (8);
     valueLabel.setBounds (r.removeFromRight (90).removeFromTop (22));
     nameLabel.setBounds (r.removeFromTop (22));
@@ -140,7 +145,7 @@ void ParameterPanel::ParamRow::resized()
 ParameterPanel::ParameterPanel (MidiLearnManager& learnMgr) : midiLearn (learnMgr)
 {
     titleLabel.setFont (juce::FontOptions (18.0f, juce::Font::bold));
-    titleLabel.setColour (juce::Label::textColourId, juce::Colours::white);
+    titleLabel.setColour (juce::Label::textColourId, Theme::get().text);
     addAndMakeVisible (titleLabel);
 
     bypassButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff546e7a));
@@ -330,18 +335,20 @@ void ParameterPanel::updateBypass (bool bypassed)
 
 void ParameterPanel::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xff121212));
-    g.setColour (juce::Colours::white.withAlpha (0.12f));
-    g.drawLine (0.0f, 0.0f, (float) getWidth(), 0.0f, 1.0f);
+    auto& th = Theme::get();
+    g.fillAll (th.background);
+    auto panel = getLocalBounds().toFloat().reduced (8.0f, 6.0f);
+    g.setColour (th.surface);
+    g.fillRoundedRectangle (panel, 16.0f);
 }
 
 void ParameterPanel::resized()
 {
-    auto r = getLocalBounds();
-    auto top = r.removeFromTop (40).reduced (8, 4);
-    bypassClearButton.setBounds (top.removeFromRight (36));
-    top.removeFromRight (3);
-    bypassLearnButton.setBounds (top.removeFromRight (64));
+    auto r = getLocalBounds().reduced (14, 12);
+    auto top = r.removeFromTop (40).reduced (4, 2);
+    bypassClearButton.setBounds (top.removeFromRight (44));
+    top.removeFromRight (4);
+    bypassLearnButton.setBounds (top.removeFromRight (88));
     top.removeFromRight (4);
     bypassButton.setBounds (top.removeFromRight (100));
     top.removeFromRight (6);
@@ -354,7 +361,7 @@ void ParameterPanel::resized()
     int y = 0;
     for (auto* row : rows)
     {
-        row->setBounds (0, y, content.getWidth(), kRowHeight);
+        row->setBounds (6, y, content.getWidth() - 12, kRowHeight);
         y += kRowHeight;
     }
 }
