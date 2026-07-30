@@ -16,35 +16,65 @@ void AudioEngine::initialise()
 {
     auto& settings = AppSettings::get();
 
-    // Allow mono (1) through stereo (2) inputs and outputs
+    // Request up to 2 in / 2 out so mono (1) and stereo (2) are both valid
     juce::String error;
     if (settings.audioDeviceStateXml != nullptr)
-        error = deviceManager.initialise (0, 2, settings.audioDeviceStateXml.get(), true);
+        error = deviceManager.initialise (2, 2, settings.audioDeviceStateXml.get(), true);
     else
-        error = deviceManager.initialise (0, 2, nullptr, true);
+        error = deviceManager.initialise (2, 2, nullptr, true);
 
     if (error.isNotEmpty())
-        deviceManager.initialise (0, 2, nullptr, true);
+        deviceManager.initialise (2, 2, nullptr, true);
 
     inputGain.store  (settings.inputGain);
     outputGain.store (settings.outputGain);
 
     deviceManager.addAudioCallback (this);
 
-    // MIDI inputs only – never open outputs
-    for (auto& device : juce::MidiInput::getAvailableDevices())
+    // Restore MIDI enables from settings — do NOT force-enable everything
+    const auto devices = juce::MidiInput::getAvailableDevices();
+    for (auto& device : devices)
     {
-        if (! deviceManager.isMidiInputDeviceEnabled (device.identifier))
-            deviceManager.setMidiInputDeviceEnabled (device.identifier, true);
-        deviceManager.addMidiInputDeviceCallback (device.identifier, this);
+        bool enable = true;
+        if (settings.midiInputsLoaded)
+        {
+            auto it = settings.midiInputEnabled.find (device.identifier);
+            if (it != settings.midiInputEnabled.end())
+                enable = it->second;
+            else
+                enable = false; // known session but new device → off until user enables
+        }
+        else
+        {
+            // First run: enable all, seed the map
+            settings.midiInputEnabled[device.identifier] = true;
+            enable = true;
+        }
+
+        deviceManager.setMidiInputDeviceEnabled (device.identifier, enable);
+        if (enable)
+            deviceManager.addMidiInputDeviceCallback (device.identifier, this);
     }
 }
 
 void AudioEngine::saveDeviceState()
 {
-    AppSettings::get().inputGain  = inputGain.load();
-    AppSettings::get().outputGain = outputGain.load();
-    AppSettings::get().storeAudioDeviceState (deviceManager);
+    auto& settings = AppSettings::get();
+    settings.inputGain  = inputGain.load();
+    settings.outputGain = outputGain.load();
+
+    // Sync MIDI map from device manager; prune missing only on explicit save
+    juce::StringArray present;
+    for (auto& d : juce::MidiInput::getAvailableDevices())
+    {
+        present.add (d.identifier);
+        settings.midiInputEnabled[d.identifier]
+            = deviceManager.isMidiInputDeviceEnabled (d.identifier);
+    }
+    settings.pruneMidiInputs (present);
+    settings.midiInputsLoaded = true;
+
+    settings.storeAudioDeviceState (deviceManager);
 }
 
 void AudioEngine::shutdown()

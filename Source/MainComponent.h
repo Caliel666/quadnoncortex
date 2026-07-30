@@ -87,6 +87,11 @@ private:
     int  dragSourceIndex = -1;
     bool dragOverTrash = false;
     std::unique_ptr<juce::Component> nameOverlay;
+    std::unique_ptr<juce::Component> settingsOverlay;
+    float paramAnim = 1.0f;
+    float tabAnim = 1.0f;
+    float presetAnim = 1.0f;
+    bool presetAnimating = false;
     std::function<void(juce::String)> pendingNameCallback;
     juce::String pendingNameText;
 
@@ -94,9 +99,9 @@ private:
     juce::Array<juce::File> presetFiles;
     int currentPresetIndex = -1;
 
-    static constexpr int kTopBar = 52;
-    static constexpr int kSideW  = 64;
-    static constexpr int kTabH   = 48;
+    static constexpr int kTopBar = 64;
+    static constexpr int kSideW  = 72;
+    static constexpr int kTabH   = 56;
     static constexpr int kBlockW = 96; // base; layout scales dynamically
     static constexpr int kBlockH = 96;
 

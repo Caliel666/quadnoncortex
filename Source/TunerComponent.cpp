@@ -1,4 +1,5 @@
 #include "TunerComponent.h"
+#include "Theme.h"
 #include <cmath>
 
 TunerComponent::TunerComponent()
@@ -116,62 +117,45 @@ void TunerComponent::timerCallback() { analyse(); repaint(); }
 //==============================================================================
 void TunerComponent::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xff0a0a0a));
+    auto& th = Theme::get();
+    g.fillAll (th.background);
+    const bool light = th.currentName == "Light";
+    const auto ink = light ? juce::Colour (0xff1f2329) : juce::Colours::white;
+    const auto inkDim = light ? juce::Colour (0xff6b7280) : juce::Colours::white.withAlpha (0.35f);
 
     const float W = (float) getWidth();
     const float H = (float) getHeight();
     if (W < 10.0f || H < 10.0f) return;
 
-    const bool inTune = hasNote && std::abs (smoothCents) < 5.0f;
-    const juce::Colour accent = inTune ? juce::Colour (0xff2ecc71) : juce::Colours::white;
-
-    // ---- Geometry of the wide shallow arc ----
-    // Chord spans nearly full width; arc bows upward a modest amount.
     const float marginX   = W * 0.04f;
-    const float chordHalf = (W * 0.5f) - marginX;          // half-width of arc
-    const float arcDepth  = juce::jlimit (28.0f, H * 0.16f, W * 0.08f); // how tall the bow is
-    const float peakY     = H * 0.10f;                      // top of the arc
-    // Circle that passes through the three points (left end, peak, right end):
-    // radius = (chordHalf^2 + arcDepth^2) / (2 * arcDepth)
+    const float chordHalf = (W * 0.5f) - marginX;
+    const float arcDepth  = juce::jlimit (28.0f, H * 0.16f, W * 0.08f);
+    const float peakY     = H * 0.10f;
     const float radius = (chordHalf * chordHalf + arcDepth * arcDepth) / (2.0f * arcDepth);
     const float cx = W * 0.5f;
-    const float cy = peakY + radius;                        // centre sits below the peak
-
-    // Angle from vertical (negative x is flat/left). Math angles CCW from +x:
-    // left end:  angle = pi - alpha, right end: angle = alpha, peak: angle = pi/2
-    // where cos(alpha) style: half-angle from top
+    const float cy = peakY + radius;
     const float halfAngle = std::asin (juce::jlimit (0.0f, 1.0f, chordHalf / radius));
-    // In standard math (CCW from +x, y up): left = pi/2 + halfAngle, right = pi/2 - halfAngle
-    // Screen y grows down, so we flip: use x = cx + r*cos(a), y = cy - r*sin(a) with math angles.
-
-    auto centsToPos = [&] (float cents) -> juce::Point<float>
-    {
-        const float t = juce::jlimit (-1.0f, 1.0f, cents / 50.0f); // -1..+1
-        // Interpolate angle from left to right
-        const float a = (juce::MathConstants<float>::halfPi + halfAngle)
-                        - (t + 1.0f) * 0.5f * (2.0f * halfAngle);
-        // a goes left→right: (pi/2+half) → (pi/2-half)
-        return { cx + radius * std::cos (a),
-                 cy - radius * std::sin (a) };
-    };
+    const float thickness = juce::jlimit (14.0f, 32.0f, H * 0.045f);
 
     auto centsToAngle = [&] (float cents) -> float
     {
-        const float t = juce::jlimit (-1.0f, 1.0f, cents / 50.0f);
+        const float tt = juce::jlimit (-1.0f, 1.0f, cents / 50.0f);
         return (juce::MathConstants<float>::halfPi + halfAngle)
-               - (t + 1.0f) * 0.5f * (2.0f * halfAngle);
+               - (tt + 1.0f) * 0.5f * (2.0f * halfAngle);
     };
 
-    const float thickness = juce::jlimit (14.0f, 36.0f, H * 0.045f);
+    auto centsToPos = [&] (float cents) -> juce::Point<float>
+    {
+        const float a = centsToAngle (cents);
+        return { cx + radius * std::cos (a), cy - radius * std::sin (a) };
+    };
 
-    // ---- Draw coloured arc segments ----
-    auto strokeSeg = [&] (float c0, float c1, juce::Colour col)
+    auto strokeArc = [&] (float c0, float c1, juce::Colour col, float thick)
     {
         const float a0 = centsToAngle (c0);
         const float a1 = centsToAngle (c1);
-        // Build polyline along the arc (math angles, y flipped)
         juce::Path p;
-        const int steps = 24;
+        const int steps = juce::jmax (8, (int) (std::abs (c1 - c0) * 1.2f));
         for (int i = 0; i <= steps; ++i)
         {
             const float a = a0 + (a1 - a0) * ((float) i / (float) steps);
@@ -181,65 +165,66 @@ void TunerComponent::paint (juce::Graphics& g)
             else        p.lineTo (x, y);
         }
         g.setColour (col);
-        g.strokePath (p, juce::PathStrokeType (thickness, juce::PathStrokeType::curved,
+        g.strokePath (p, juce::PathStrokeType (thick, juce::PathStrokeType::curved,
                                                juce::PathStrokeType::rounded));
     };
 
-    strokeSeg (-50.0f, -20.0f, juce::Colour (0xffe74c3c).withAlpha (0.7f));
-    strokeSeg (-20.0f,  -5.0f, juce::Colour (0xfff1c40f).withAlpha (0.7f));
-    strokeSeg ( -5.0f,   5.0f, juce::Colour (0xff2ecc71).withAlpha (0.9f));
-    strokeSeg (  5.0f,  20.0f, juce::Colour (0xfff1c40f).withAlpha (0.7f));
-    strokeSeg ( 20.0f,  50.0f, juce::Colour (0xffe74c3c).withAlpha (0.7f));
+    // Neutral base arc
+    strokeArc (-50.0f, 50.0f, inkDim.withAlpha (0.4f), thickness);
 
-    // ---- Tick marks ----
-    g.setColour (juce::Colours::white.withAlpha (0.4f));
+    // Ticks
+    g.setColour (inkDim);
     for (int c = -50; c <= 50; c += 10)
     {
         const float a = centsToAngle ((float) c);
-        const float cosA = std::cos (a);
-        const float sinA = std::sin (a);
+        const float cosA = std::cos (a), sinA = std::sin (a);
         const float r0 = radius - thickness * 0.55f;
         const float r1 = radius + thickness * 0.55f;
         g.drawLine (cx + cosA * r0, cy - sinA * r0,
                     cx + cosA * r1, cy - sinA * r1,
-                    c == 0 ? 3.0f : 1.5f);
+                    c == 0 ? 3.0f : 1.4f);
     }
 
-    // ---- Centre marker (triangle above peak) ----
+    // Centre marker
     {
         auto peak = centsToPos (0.0f);
         juce::Path tri;
         tri.addTriangle (peak.x, peak.y - thickness * 0.7f - 2.0f,
                          peak.x - 10.0f, peak.y - thickness * 0.7f - 18.0f,
                          peak.x + 10.0f, peak.y - thickness * 0.7f - 18.0f);
-        g.setColour (juce::Colours::white);
+        g.setColour (ink.withAlpha (0.85f));
         g.fillPath (tri);
     }
 
-    // ---- Needle ----
+    // Indicator: arc segment ON the curve (small/green centre → long/red at edges)
     if (hasNote)
     {
+        const float absC = std::abs (smoothCents);
+        const float tAmt = juce::jlimit (0.0f, 1.0f, absC / 50.0f);
+        // Half-width in cents grows toward edges
+        const float halfW = juce::jmap (tAmt, 2.5f, 14.0f);
+        const float thick = thickness * juce::jmap (tAmt, 1.0f, 1.15f);
+        const juce::Colour col = juce::Colour (0xff2ecc71).interpolatedWith (
+                                     juce::Colour (0xffe74c3c), tAmt);
+
+        float c0 = smoothCents - halfW;
+        float c1 = smoothCents + halfW;
+        // Clamp to arc range but keep segment length when at extreme
+        if (c0 < -50.0f) { c1 = juce::jmin (50.0f, c1 + (-50.0f - c0)); c0 = -50.0f; }
+        if (c1 >  50.0f) { c0 = juce::jmax (-50.0f, c0 - (c1 - 50.0f)); c1 = 50.0f; }
+
+        // Soft glow under
+        strokeArc (c0, c1, col.withAlpha (0.25f), thick * 1.6f);
+        strokeArc (c0, c1, col, thick);
+
+        // Small highlight bead at exact position
         auto pos = centsToPos (smoothCents);
-        const float rad = juce::jlimit (10.0f, 16.0f, thickness * 0.55f);
-        g.setColour (inTune ? juce::Colour (0xff2ecc71) : juce::Colour (0xffff5252));
-        g.fillEllipse (pos.x - rad, pos.y - rad, rad * 2.0f, rad * 2.0f);
-        g.setColour (juce::Colours::white);
-        g.drawEllipse (pos.x - rad, pos.y - rad, rad * 2.0f, rad * 2.0f, 2.0f);
+        const float bead = thick * juce::jmap (tAmt, 0.35f, 0.22f);
+        g.setColour (juce::Colours::white.withAlpha (0.5f));
+        g.fillEllipse (pos.x - bead, pos.y - bead, bead * 2.0f, bead * 2.0f);
     }
 
-    // ---- Cents text (top right) ----
-    if (hasNote)
-    {
-        g.setFont (juce::FontOptions (juce::jlimit (16.0f, 26.0f, H * 0.04f)));
-        g.setColour (inTune ? juce::Colour (0xff2ecc71) : juce::Colours::white.withAlpha (0.85f));
-        const juce::String centsStr = (smoothCents >= 0 ? "+" : "")
-                                      + juce::String ((int) std::round (smoothCents)) + " cent";
-        g.drawText (centsStr,
-                    juce::Rectangle<float> (W * 0.55f, 4.0f, W * 0.4f, H * 0.06f),
-                    juce::Justification::centredRight);
-    }
-
-    // ---- Giant note ----
+    // Note / cents / Hz
     {
         const float noteTop = peakY + arcDepth + thickness + H * 0.04f;
         const float noteH   = H * 0.48f;
@@ -247,7 +232,12 @@ void TunerComponent::paint (juce::Graphics& g)
 
         if (hasNote)
         {
-            g.setColour (accent.withAlpha (0.07f));
+            const float absC = std::abs (smoothCents);
+            const float tAmt = juce::jlimit (0.0f, 1.0f, absC / 50.0f);
+            const juce::Colour accent = juce::Colour (0xff2ecc71).interpolatedWith (
+                                            juce::Colour (0xffe74c3c), tAmt);
+
+            g.setColour (accent.withAlpha (0.08f));
             const float glow = juce::jmin (W, noteH) * 0.5f;
             g.fillEllipse (noteArea.withSizeKeepingCentre (glow, glow));
 
@@ -256,29 +246,32 @@ void TunerComponent::paint (juce::Graphics& g)
             g.setColour (accent);
             g.drawText (noteName, noteArea.toNearestInt(), juce::Justification::centred);
 
-            // Octave
             g.setFont (juce::FontOptions (fontSize * 0.3f, juce::Font::bold));
-            g.setColour (juce::Colours::white.withAlpha (0.5f));
+            g.setColour (inkDim);
             g.drawText (juce::String (noteOctave),
                         noteArea.reduced (W * 0.18f, noteH * 0.12f).toNearestInt(),
                         juce::Justification::topRight);
+
+            g.setFont (juce::FontOptions (juce::jlimit (16.0f, 26.0f, H * 0.04f)));
+            g.setColour (accent);
+            const juce::String centsStr = (smoothCents >= 0 ? "+" : "")
+                                          + juce::String ((int) std::round (smoothCents)) + " cent";
+            g.drawText (centsStr,
+                        juce::Rectangle<float> (W * 0.55f, 4.0f, W * 0.4f, H * 0.06f),
+                        juce::Justification::centredRight);
+
+            g.setFont (juce::FontOptions (juce::jlimit (18.0f, 32.0f, H * 0.05f), juce::Font::bold));
+            g.setColour (ink.withAlpha (0.7f));
+            g.drawText (juce::String (smoothFreq, 1) + " Hz",
+                        juce::Rectangle<float> (W * 0.04f, H * 0.90f, W * 0.4f, H * 0.08f),
+                        juce::Justification::centredLeft);
         }
         else
         {
-            g.setColour (juce::Colours::white.withAlpha (0.18f));
+            g.setColour (ink.withAlpha (0.2f));
             g.setFont (juce::FontOptions (juce::jlimit (22.0f, 36.0f, H * 0.055f)));
             g.drawText ("Play a note", noteArea.toNearestInt(), juce::Justification::centred);
         }
-    }
-
-    // ---- Bottom: Hz ----
-    if (hasNote)
-    {
-        g.setFont (juce::FontOptions (juce::jlimit (18.0f, 32.0f, H * 0.05f), juce::Font::bold));
-        g.setColour (juce::Colours::white.withAlpha (0.7f));
-        g.drawText (juce::String (smoothFreq, 1) + " Hz",
-                    juce::Rectangle<float> (W * 0.04f, H * 0.90f, W * 0.4f, H * 0.08f),
-                    juce::Justification::centredLeft);
     }
 }
 

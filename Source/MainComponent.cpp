@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "Theme.h"
 
 static const juce::uint32 kPalette[] = {
     0xffe67e22, 0xffe74c3c, 0xff9b59b6, 0xff3498db,
@@ -8,6 +9,24 @@ static const juce::uint32 kPalette[] = {
 
 MainComponent::MainComponent()
 {
+    setLookAndFeel (&Theme::get().softLaf);
+    Theme::get().applyToLookAndFeel();
+    {
+        auto& th = Theme::get();
+        titleLabel.setColour (juce::Label::textColourId, th.text);
+        titleLabel.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+        presetBox.setLookAndFeel (&th.softLaf);
+        presetBox.setColour (juce::ComboBox::backgroundColourId, th.surfaceAlt);
+        presetBox.setColour (juce::ComboBox::textColourId, th.text);
+        presetBox.setColour (juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
+        presetBox.setColour (juce::ComboBox::arrowColourId, th.textDim);
+        for (auto* b : { &prevPresetBtn, &nextPresetBtn, &newPresetBtn, &savePresetBtn,
+                         &renamePresetBtn, &addButton, &settingsBtn, &tabPedal, &tabTuner })
+            th.applyButton (*b);
+        th.applyButton (addButton, true);
+        th.applyButton (savePresetBtn, true);
+    }
+
     getLookAndFeel().setColour (juce::ResizableWindow::backgroundColourId, juce::Colour (0xff0d0d0d));
     getLookAndFeel().setColour (juce::TextButton::buttonColourId, juce::Colour (0xff37474f));
     getLookAndFeel().setColour (juce::TextButton::textColourOffId, juce::Colours::white);
@@ -46,19 +65,22 @@ MainComponent::MainComponent()
     settingsBtn.onClick = [this] { openSettings(); };
     addAndMakeVisible (settingsBtn);
 
-    trashZone.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffc0392b));
+    trashZone.setButtonText ("X");
+    trashZone.setColour (juce::TextButton::buttonColourId, Theme::get().danger);
     trashZone.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
     trashZone.setVisible (false);
     addChildComponent (trashZone);
 
     auto setupFader = [] (juce::Slider& s)
     {
+        auto& th = Theme::get();
         s.setSliderStyle (juce::Slider::LinearVertical);
         s.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
         s.setRange (0.0, 2.0, 0.01);
         s.setValue (1.0);
-        s.setColour (juce::Slider::thumbColourId, juce::Colour (0xff4fc3f7));
-        s.setColour (juce::Slider::trackColourId, juce::Colour (0xff455a64));
+        s.setColour (juce::Slider::thumbColourId, th.accent);
+        s.setColour (juce::Slider::trackColourId, th.accent);
+        s.setColour (juce::Slider::backgroundColourId, th.surfaceAlt);
     };
     setupFader (inputFader);
     setupFader (outputFader);
@@ -70,10 +92,10 @@ MainComponent::MainComponent()
     addAndMakeVisible (outputFader);
     inLabel.setJustificationType (juce::Justification::centred);
     outLabel.setJustificationType (juce::Justification::centred);
-    inLabel.setColour (juce::Label::textColourId, juce::Colours::grey);
-    outLabel.setColour (juce::Label::textColourId, juce::Colours::grey);
-    inLabel.setFont (juce::FontOptions (11.0f));
-    outLabel.setFont (juce::FontOptions (11.0f));
+    inLabel.setColour (juce::Label::textColourId, Theme::get().textDim);
+    outLabel.setColour (juce::Label::textColourId, Theme::get().textDim);
+    inLabel.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+    outLabel.setFont (juce::FontOptions (12.0f, juce::Font::bold));
     addAndMakeVisible (inLabel);
     addAndMakeVisible (outLabel);
 
@@ -159,6 +181,7 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
+    setLookAndFeel (nullptr);
     stopTimer();
     editorWindow = nullptr;
     scanOverlay = nullptr;
@@ -167,15 +190,66 @@ MainComponent::~MainComponent()
 
 void MainComponent::openSettings()
 {
+    if (settingsOverlay != nullptr)
+    {
+        auto* p = settingsOverlay.get();
+        juce::Desktop::getInstance().getAnimator().fadeOut (p, 180);
+        juce::Timer::callAfterDelay (190, [this]
+        {
+            settingsOverlay.reset();
+        });
+        return;
+    }
+
     auto* panel = new SettingsComponent (audioEngine, audioEngine.getMidiLearnManager());
-    juce::DialogWindow::LaunchOptions opts;
-    opts.content.setOwned (panel);
-    opts.dialogTitle = "Audio / MIDI";
-    opts.dialogBackgroundColour = juce::Colour (0xff1a1a1a);
-    opts.escapeKeyTriggersCloseButton = true;
-    opts.useNativeTitleBar = false;
-    opts.resizable = true;
-    opts.launchAsync();
+    panel->setLookAndFeel (&Theme::get().softLaf);
+    panel->onThemeChanged = [this]
+    {
+        auto& th = Theme::get();
+        th.applyToLookAndFeel();
+        setLookAndFeel (&th.softLaf);
+        sendLookAndFeelChange(); // recursive to all children
+
+        for (auto* s : { &inputFader, &outputFader })
+        {
+            s->setColour (juce::Slider::thumbColourId, th.accent);
+            s->setColour (juce::Slider::trackColourId, th.accent);
+            s->setColour (juce::Slider::backgroundColourId, th.surfaceAlt);
+        }
+        inLabel.setColour (juce::Label::textColourId, th.textDim);
+        outLabel.setColour (juce::Label::textColourId, th.textDim);
+        titleLabel.setColour (juce::Label::textColourId, th.text);
+        presetBox.setLookAndFeel (&th.softLaf);
+        presetBox.setColour (juce::ComboBox::backgroundColourId, th.surfaceAlt);
+        presetBox.setColour (juce::ComboBox::textColourId, th.text);
+        presetBox.setColour (juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
+        presetBox.setColour (juce::ComboBox::arrowColourId, th.textDim);
+
+        for (auto* b : { &prevPresetBtn, &nextPresetBtn, &newPresetBtn, &savePresetBtn,
+                         &renamePresetBtn, &addButton, &settingsBtn, &tabPedal, &tabTuner })
+            th.applyButton (*b);
+        th.applyButton (addButton, true);
+        th.applyButton (savePresetBtn, true);
+
+        if (parameterPanel)
+        {
+            parameterPanel->setLookAndFeel (&th.softLaf);
+            parameterPanel->sendLookAndFeelChange();
+            parameterPanel->repaint();
+        }
+        if (tuner) { tuner->sendLookAndFeelChange(); tuner->repaint(); }
+        if (pluginBrowser) { pluginBrowser->sendLookAndFeelChange(); pluginBrowser->repaint(); }
+        for (auto* b : blocks) b->repaint();
+        repaint();
+    };
+    panel->onCloseRequested = [this] { openSettings(); }; // toggles closed
+
+    panel->setBounds (getLocalBounds());
+    panel->setAlpha (0.0f);
+    addAndMakeVisible (panel);
+    panel->toFront (true);
+    settingsOverlay.reset (panel);
+    juce::Desktop::getInstance().getAnimator().fadeIn (panel, 250);
 }
 
 void MainComponent::startBootScan()
@@ -244,29 +318,44 @@ void MainComponent::showPluginEditor (int index)
 
 void MainComponent::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xff0d0d0d));
-    auto r = getLocalBounds();
-    r.removeFromTop (kTopBar);
-    auto left  = r.removeFromLeft (kSideW);
-    auto right = r.removeFromRight (kSideW);
-    left.removeFromBottom (kTabH + 18);
-    right.removeFromBottom (kTabH + 18);
-    paintMeter (g, left.removeFromRight (10).reduced (1, 4), smoothInPeak);
-    paintMeter (g, right.removeFromLeft (10).reduced (1, 4), smoothOutPeak);
+    auto& th = Theme::get();
+    g.fillAll (th.background);
+
+    // Side VU meters (only on board tab)
+    if (currentTab == 0 && inputFader.isVisible())
+    {
+        auto left  = getLocalBounds();
+        left.removeFromTop (kTopBar);
+        left.removeFromBottom (kTabH);
+        auto right = left.removeFromRight (kSideW);
+        left = left.removeFromLeft (kSideW);
+
+        left.removeFromBottom (22);
+        right.removeFromBottom (22);
+        // Meter strip on the inner edge of each side column
+        auto inMeter  = left.removeFromRight (14).reduced (2, 8);
+        auto outMeter = right.removeFromLeft (14).reduced (2, 8);
+        paintMeter (g, inMeter,  smoothInPeak);
+        paintMeter (g, outMeter, smoothOutPeak);
+    }
 }
 
 void MainComponent::paintMeter (juce::Graphics& g, juce::Rectangle<int> area, float peak)
 {
-    g.setColour (juce::Colour (0xff1a1a1a));
-    g.fillRoundedRectangle (area.toFloat(), 3.0f);
-    const float db = juce::Decibels::gainToDecibels (peak + 1.0e-6f, -60.0f);
-    const float norm = juce::jmap (db, -60.0f, 0.0f, 0.0f, 1.0f);
-    auto fill = area.removeFromBottom ((int) (area.getHeight() * juce::jlimit (0.0f, 1.0f, norm)));
-    juce::Colour c = peak >= 0.99f ? juce::Colours::red
-                     : peak >= 0.7f  ? juce::Colours::orange
-                                     : juce::Colour (0xff2ecc71);
+    auto& th = Theme::get();
+    g.setColour (th.surfaceAlt);
+    g.fillRoundedRectangle (area.toFloat(), 5.0f);
+
+    const float db = juce::Decibels::gainToDecibels (juce::jmax (peak, 1.0e-6f), -60.0f);
+    const float norm = juce::jlimit (0.0f, 1.0f, juce::jmap (db, -60.0f, 0.0f, 0.0f, 1.0f));
+    if (norm <= 0.001f) return;
+
+    auto fill = area.removeFromBottom (juce::jmax (2, (int) (area.getHeight() * norm)));
+    juce::Colour c = peak >= 0.98f ? th.danger
+                     : peak >= 0.7f  ? th.warning
+                                     : th.success;
     g.setColour (c);
-    g.fillRoundedRectangle (fill.toFloat(), 2.0f);
+    g.fillRoundedRectangle (fill.toFloat(), 4.0f);
 }
 
 void MainComponent::resized()
@@ -274,24 +363,24 @@ void MainComponent::resized()
     auto r = getLocalBounds();
 
     // ---- Top bar ----
-    auto top = r.removeFromTop (kTopBar);
-    titleLabel.setBounds (top.removeFromLeft (120).reduced (6, 10));
-    settingsBtn.setBounds (top.removeFromRight (48).reduced (3));
-    addButton.setBounds (top.removeFromRight (40).reduced (3));
+    auto top = r.removeFromTop (kTopBar).reduced (6, 6);
+    titleLabel.setBounds (top.removeFromLeft (100).reduced (4, 4));
+    settingsBtn.setBounds (top.removeFromRight (56).reduced (3));
+    addButton.setBounds (top.removeFromRight (56).reduced (3));
 
-    const int presetBoxW = juce::jlimit (140, 220, top.getWidth() / 3);
-    const int clusterW = 36 + 4 + presetBoxW + 4 + 36 + 4 + 48 + 4 + 56 + 4 + 44;
+    const int presetBoxW = juce::jlimit (160, 260, top.getWidth() / 3);
+    const int clusterW = 48 + 6 + presetBoxW + 6 + 48 + 6 + 56 + 6 + 64 + 6 + 52;
     auto centre = top.withSizeKeepingCentre (juce::jmin (clusterW, top.getWidth()), top.getHeight());
-    prevPresetBtn.setBounds (centre.removeFromLeft (36).reduced (2));
-    presetBox.setBounds (centre.removeFromLeft (presetBoxW).reduced (2));
-    nextPresetBtn.setBounds (centre.removeFromLeft (36).reduced (2));
-    newPresetBtn.setBounds (centre.removeFromLeft (48).reduced (2));
-    savePresetBtn.setBounds (centre.removeFromLeft (56).reduced (2));
-    renamePresetBtn.setBounds (centre.removeFromLeft (44).reduced (2));
+    prevPresetBtn.setBounds (centre.removeFromLeft (48).reduced (3));
+    presetBox.setBounds (centre.removeFromLeft (presetBoxW).reduced (3));
+    nextPresetBtn.setBounds (centre.removeFromLeft (48).reduced (3));
+    newPresetBtn.setBounds (centre.removeFromLeft (56).reduced (3));
+    savePresetBtn.setBounds (centre.removeFromLeft (64).reduced (3));
+    renamePresetBtn.setBounds (centre.removeFromLeft (52).reduced (3));
 
     // Trash sits below the top bar so it doesn't cover presets
     if (showTrash)
-        trashZone.setBounds (getWidth() / 2 - 32, kTopBar + 8, 64, 48);
+        trashZone.setBounds (getWidth() / 2 - 48, kTopBar + 12, 96, 56);
 
     auto tabs = r.removeFromBottom (kTabH);
     tabPedal.setBounds (tabs.removeFromLeft (tabs.getWidth() / 2).reduced (6, 5));
@@ -306,10 +395,12 @@ void MainComponent::resized()
         outLabel.setVisible (true);
         inputFader.setVisible (true);
         outputFader.setVisible (true);
-        inLabel.setBounds (left.removeFromBottom (20));
-        inputFader.setBounds (left.reduced (12, 4));
-        outLabel.setBounds (right.removeFromBottom (20));
-        outputFader.setBounds (right.reduced (12, 4));
+        inLabel.setBounds (left.removeFromBottom (22));
+        left.removeFromRight (16); // room for VU painted in paint()
+        inputFader.setBounds (left.reduced (4, 6));
+        outLabel.setBounds (right.removeFromBottom (22));
+        right.removeFromLeft (16);
+        outputFader.setBounds (right.reduced (4, 6));
 
         const bool showParams = selectedIndex >= 0;
         // When a plugin is selected, params take lower portion; board keeps the rest
@@ -431,7 +522,8 @@ void MainComponent::resized()
 
     if (pluginBrowser) pluginBrowser->setBounds (getLocalBounds());
     if (scanOverlay)   scanOverlay->setBounds (getLocalBounds());
-    if (nameOverlay)   nameOverlay->setBounds (getLocalBounds());
+    if (nameOverlay)     nameOverlay->setBounds (getLocalBounds());
+    if (settingsOverlay) settingsOverlay->setBounds (getLocalBounds());
 }
 
 void MainComponent::rebuildBlocks()
@@ -472,7 +564,9 @@ void MainComponent::rebuildBlocks()
             dragOverTrash = false;
             showTrash = false;
             trashZone.setVisible (false);
-            trashZone.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffc0392b));
+            trashZone.setButtonText ("X");
+            trashZone.setColour (juce::TextButton::buttonColourId, Theme::get().danger);
+            for (auto* b : blocks) b->setDragging (false);
             resized();
         };
         block->onReorder = [this] (int from, int to) { reorderPlugins (from, to); };
@@ -515,9 +609,23 @@ void MainComponent::selectPlugin (int index)
                                        },
                                        [this] { showColourPicker (selectedIndex); });
         }
-        else parameterPanel->clear();
+        else
+        {
+            parameterPanel->clear();
+            parameterPanel->setVisible (false);
+        }
     }
     resized();
+
+    // Bounce / slide-in the parameter panel
+    if (parameterPanel != nullptr && selectedIndex >= 0 && parameterPanel->isVisible())
+    {
+        auto finalBounds = parameterPanel->getBounds();
+        parameterPanel->setBounds (finalBounds.translated (0, 48));
+        parameterPanel->setAlpha (0.0f);
+        juce::Desktop::getInstance().getAnimator().animateComponent (
+            parameterPanel.get(), finalBounds, 1.0f, 340, false, 1.6, 0.3);
+    }
 }
 
 void MainComponent::removePlugin (int index)
@@ -606,45 +714,48 @@ void MainComponent::showPresetNameDialog (const juce::String& title,
     nameOverlay.reset();
     pendingNameCallback = std::move (onOk);
 
-    struct Shared
-    {
-        juce::String text;
-    };
+    struct Shared { juce::String text; };
     auto shared = std::make_shared<Shared>();
     shared->text = initial;
 
-    class Overlay : public juce::Component
+    class Overlay : public juce::Component, private juce::Timer
     {
     public:
         MainComponent& owner;
         std::shared_ptr<Shared> shared;
-        juce::Label titleLab;
+        juce::Label titleLab, nameLab;
         juce::TextEditor editor;
-        juce::TextButton okBtn { "OK" }, cancelBtn { "Cancel" };
+        juce::TextButton okBtn { "OK" }, cancelBtn { "CANCEL" };
         OnScreenKeyboard keyboard;
+        float fade = 0.0f;
 
         Overlay (MainComponent& o, std::shared_ptr<Shared> s, const juce::String& titleTxt)
             : owner (o), shared (std::move (s))
         {
             setInterceptsMouseClicks (true, true);
 
+            auto& th = Theme::get();
+
             titleLab.setText (titleTxt, juce::dontSendNotification);
-            titleLab.setFont (juce::FontOptions (22.0f, juce::Font::bold));
-            titleLab.setColour (juce::Label::textColourId, juce::Colours::white);
+            titleLab.setFont (juce::FontOptions (18.0f, juce::Font::bold));
+            titleLab.setColour (juce::Label::textColourId, th.textDim);
             titleLab.setJustificationType (juce::Justification::centred);
             addAndMakeVisible (titleLab);
 
-            const juce::Font f (juce::FontOptions (22.0f));
+            const juce::Font f (juce::FontOptions (28.0f, juce::Font::bold));
             editor.setFont (f);
             editor.setText (shared->text, false);
             editor.applyFontToAllText (f);
-            editor.setColour (juce::TextEditor::textColourId, juce::Colours::white);
-            editor.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff2c2c2c));
-            editor.setColour (juce::TextEditor::outlineColourId, juce::Colour (0xff4fc3f7));
-            editor.setColour (juce::CaretComponent::caretColourId, juce::Colours::white);
+            editor.setColour (juce::TextEditor::textColourId, th.text);
+            editor.setColour (juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
+            editor.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+            editor.setColour (juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
+            editor.setColour (juce::TextEditor::highlightColourId, th.accent.withAlpha (0.35f));
+            editor.setColour (juce::CaretComponent::caretColourId, th.accent);
             editor.setMultiLine (false);
             editor.setSelectAllWhenFocused (true);
             editor.setWantsKeyboardFocus (true);
+            editor.setJustification (juce::Justification::centred);
             editor.onTextChange = [this]
             {
                 shared->text = editor.getText();
@@ -652,10 +763,8 @@ void MainComponent::showPresetNameDialog (const juce::String& title,
             editor.onReturnKey = [this] { finish (true); };
             addAndMakeVisible (editor);
 
-            okBtn.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff27ae60));
-            okBtn.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
-            cancelBtn.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff546e7a));
-            cancelBtn.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+            th.applyButton (okBtn, true);
+            th.applyButton (cancelBtn, false);
             okBtn.onClick = [this] { finish (true); };
             cancelBtn.onClick = [this] { finish (false); };
             addAndMakeVisible (okBtn);
@@ -673,20 +782,26 @@ void MainComponent::showPresetNameDialog (const juce::String& title,
                 {
                     shared->text += s;
                 }
-
-                const juce::Font f (juce::FontOptions (22.0f));
+                const juce::Font f2 (juce::FontOptions (28.0f, juce::Font::bold));
                 editor.setText (shared->text, false);
-                editor.applyFontToAllText (f);
+                editor.applyFontToAllText (f2);
                 editor.setCaretPosition (shared->text.length());
             };
             keyboard.onEnter = [this] { finish (true); };
-            keyboard.onClose = [this] { finish (false); };
+
+            startTimerHz (60);
+        }
+
+        void timerCallback() override
+        {
+            fade = juce::jmin (1.0f, fade + 0.08f);
+            repaint();
+            if (fade >= 1.0f) stopTimer();
         }
 
         void finish (bool commit)
         {
             const juce::String text = shared->text;
-            // Must call owner method (public) — not private fields from local class
             juce::MessageManager::callAsync ([ownerPtr = juce::Component::SafePointer<MainComponent> (&owner),
                                               commit, text]()
             {
@@ -697,22 +812,37 @@ void MainComponent::showPresetNameDialog (const juce::String& title,
 
         void paint (juce::Graphics& g) override
         {
-            g.fillAll (juce::Colours::black.withAlpha (0.88f));
-            auto card = getLocalBounds().reduced (getWidth() / 30, getHeight() / 16);
-            g.setColour (juce::Colour (0xff1a1a1a));
-            g.fillRoundedRectangle (card.toFloat(), 14.0f);
+            auto& th = Theme::get();
+            // Full-screen dark glass overlay (PlayStation-style)
+            g.setColour (th.overlay.withMultipliedAlpha (fade));
+            g.fillAll();
+
+            // Subtle vignette
+            juce::ColourGradient vig (juce::Colours::transparentBlack, (float) getWidth() * 0.5f, (float) getHeight() * 0.4f,
+                                      juce::Colours::black.withAlpha (0.35f * fade), (float) getWidth() * 0.5f, (float) getHeight(), true);
+            g.setGradientFill (vig);
+            g.fillAll();
+
+            // Name field underline only (no chrome box)
+            auto field = editor.getBounds().toFloat().expanded (8.0f, 4.0f);
+            g.setColour (th.accent.withAlpha (0.85f * fade));
+            g.fillRoundedRectangle (field.getX(), field.getBottom() - 2.0f, field.getWidth(), 2.0f, 1.0f);
         }
 
         void resized() override
         {
-            auto card = getLocalBounds().reduced (getWidth() / 30, getHeight() / 16);
-            auto top = card.removeFromTop (48).reduced (12, 4);
-            cancelBtn.setBounds (top.removeFromRight (110).reduced (4));
-            okBtn.setBounds (top.removeFromRight (110).reduced (4));
-            titleLab.setBounds (top);
-            editor.setBounds (card.removeFromTop (52).reduced (16, 4));
-            card.removeFromTop (8);
-            keyboard.setBounds (card.reduced (8, 4));
+            auto r = getLocalBounds().reduced (getWidth() / 18, getHeight() / 14);
+            titleLab.setBounds (r.removeFromTop (28));
+            r.removeFromTop (12);
+            editor.setBounds (r.removeFromTop (52).reduced (r.getWidth() / 10, 0));
+            r.removeFromTop (16);
+
+            auto actions = r.removeFromTop (44);
+            const int bw = 130;
+            okBtn.setBounds (actions.getCentreX() - bw - 8, actions.getY(), bw, 40);
+            cancelBtn.setBounds (actions.getCentreX() + 8, actions.getY(), bw, 40);
+            r.removeFromTop (12);
+            keyboard.setBounds (r);
         }
     };
 
@@ -721,7 +851,6 @@ void MainComponent::showPresetNameDialog (const juce::String& title,
     nameOverlay.reset (overlay);
     addAndMakeVisible (overlay);
     overlay->toFront (true);
-
     juce::MessageManager::callAsync ([ed = &overlay->editor] { ed->grabKeyboardFocus(); });
 }
 
@@ -881,6 +1010,10 @@ void MainComponent::loadPreset (const juce::File& f)
 {
     if (! f.existsAsFile()) return;
 
+    presetAnimating = true;
+    blocksViewport.setAlpha (0.25f);
+    if (parameterPanel) parameterPanel->setAlpha (0.25f);
+
     // Close any open plugin editor first
     editorWindow = nullptr;
 
@@ -922,6 +1055,11 @@ void MainComponent::loadPreset (const juce::File& f)
     rebuildBlocks();
     audioEngine.setMuted (wasMuted);
     resized();
+
+    juce::Desktop::getInstance().getAnimator().fadeIn (&blocksViewport, 280);
+    if (parameterPanel && parameterPanel->isVisible())
+        juce::Desktop::getInstance().getAnimator().fadeIn (parameterPanel.get(), 280);
+    juce::Timer::callAfterDelay (300, [this] { presetAnimating = false; });
 }
 
 void MainComponent::presetNext()
@@ -961,6 +1099,7 @@ void MainComponent::itemDragMove (const SourceDetails& d)
     if (over != dragOverTrash)
     {
         dragOverTrash = over;
+        trashZone.setButtonText (over ? "DROP" : "X");
         trashZone.setColour (juce::TextButton::buttonColourId,
                              over ? juce::Colour (0xffff1744) : juce::Colour (0xffc0392b));
         if (juce::isPositiveAndBelow (dragSourceIndex, blocks.size()))

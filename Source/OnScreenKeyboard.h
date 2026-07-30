@@ -1,32 +1,25 @@
 #pragma once
 #include <JuceHeader.h>
+#include "Theme.h"
 
-/** Simple US QWERTY on-screen keyboard for touch preset naming. */
+/** Modern flat on-screen keyboard (no close button — host overlay handles dismiss). */
 class OnScreenKeyboard : public juce::Component
 {
 public:
     OnScreenKeyboard()
     {
-        keyLaf.setDefaultSansSerifTypefaceName (juce::Font::getDefaultSansSerifFontName());
         buildKeys (false);
-        closeBtn.setButtonText ("X");
-        closeBtn.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffc0392b));
-        closeBtn.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
-        closeBtn.setLookAndFeel (&keyLaf);
-        closeBtn.onClick = [this] { if (onClose) onClose(); };
-        addAndMakeVisible (closeBtn);
     }
 
     ~OnScreenKeyboard() override
     {
         for (auto* b : keyButtons)
             b->setLookAndFeel (nullptr);
-        closeBtn.setLookAndFeel (nullptr);
     }
 
     std::function<void(juce::String)> onKey;
-    std::function<void()> onClose;
     std::function<void()> onEnter;
+    std::function<void()> onClose; // unused, kept for API compat
 
     void setShift (bool s)
     {
@@ -42,16 +35,13 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (juce::Colour (0xff1a1a1a));
-        g.setColour (juce::Colours::white.withAlpha (0.12f));
-        g.drawRect (getLocalBounds(), 1);
+        // Transparent — sits on overlay
+        juce::ignoreUnused (g);
     }
 
     void resized() override
     {
-        auto r = getLocalBounds().reduced (6);
-        closeBtn.setBounds (r.getRight() - 48, r.getY(), 44, 40);
-        r.removeFromTop (44);
+        auto r = getLocalBounds().reduced (4);
         if (keyButtons.isEmpty()) return;
 
         const char* rowChars[4] = {
@@ -70,7 +60,7 @@ public:
             const int total = kw * n;
             rowR = rowR.withSizeKeepingCentre (total, rowR.getHeight());
             for (int i = 0; i < n && idx < keyButtons.size(); ++i, ++idx)
-                keyButtons[idx]->setBounds (rowR.removeFromLeft (kw).reduced (4));
+                keyButtons[idx]->setBounds (rowR.removeFromLeft (kw).reduced (3, 4));
         };
 
         placeRow (rowChars[0], r.removeFromTop (rowH));
@@ -80,24 +70,45 @@ public:
         auto rowR = r;
         const int specialW = juce::jmax (70, rowR.getWidth() / 8);
         if (idx < keyButtons.size())
-            keyButtons[idx++]->setBounds (rowR.removeFromLeft (specialW).reduced (4)); // Shift
+            keyButtons[idx++]->setBounds (rowR.removeFromLeft (specialW).reduced (3, 4));
         placeRow (rowChars[3], rowR.removeFromLeft (rowR.getWidth() * 4 / 6));
         if (idx < keyButtons.size())
-            keyButtons[idx++]->setBounds (rowR.removeFromLeft (specialW).reduced (4)); // Bksp
+            keyButtons[idx++]->setBounds (rowR.removeFromLeft (specialW).reduced (3, 4));
         if (idx < keyButtons.size())
-            keyButtons[idx++]->setBounds (rowR.removeFromLeft (rowR.getWidth() / 2).reduced (4)); // Space
+            keyButtons[idx++]->setBounds (rowR.removeFromLeft (rowR.getWidth() / 2).reduced (3, 4));
         if (idx < keyButtons.size())
-            keyButtons[idx++]->setBounds (rowR.reduced (4)); // Enter
+            keyButtons[idx++]->setBounds (rowR.reduced (3, 4));
     }
 
 private:
-    struct BigKeyLaf : public juce::LookAndFeel_V4
+    struct SoftKeyLaf : public juce::LookAndFeel_V4
     {
-        juce::Font getTextButtonFont (juce::TextButton& b, int buttonHeight) override
+        juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override
         {
-            // Special keys a bit smaller label-wise but still large
-            const float size = juce::jlimit (18.0f, 36.0f, (float) buttonHeight * 0.42f);
-            return juce::Font (juce::FontOptions (size, juce::Font::bold));
+            return juce::Font (juce::FontOptions (juce::jlimit (16.0f, 28.0f, buttonHeight * 0.38f),
+                                                  juce::Font::bold));
+        }
+
+        void drawButtonBackground (juce::Graphics& g, juce::Button& button,
+                                   const juce::Colour&, bool isHighlighted, bool isDown) override
+        {
+            auto& th = Theme::get();
+            auto bounds = button.getLocalBounds().toFloat().reduced (1.0f);
+            auto fill = isDown ? th.keyFacePressed
+                               : (isHighlighted ? th.keyFace.brighter (0.12f) : th.keyFace);
+            g.setColour (fill);
+            g.fillRoundedRectangle (bounds, 10.0f);
+            g.setColour (th.border.withAlpha (0.5f));
+            g.drawRoundedRectangle (bounds, 10.0f, 1.0f);
+        }
+
+        void drawButtonText (juce::Graphics& g, juce::TextButton& button,
+                             bool, bool) override
+        {
+            g.setColour (Theme::get().text);
+            g.setFont (getTextButtonFont (button, button.getHeight()));
+            g.drawText (button.getButtonText(), button.getLocalBounds(),
+                        juce::Justification::centred, false);
         }
     };
 
@@ -107,10 +118,8 @@ private:
         auto addKey = [this] (const juce::String& label, const juce::String& insert)
         {
             auto* b = keyButtons.add (new juce::TextButton (label));
-            b->setColour (juce::TextButton::buttonColourId, juce::Colour (0xff37474f));
-            b->setColour (juce::TextButton::textColourOffId, juce::Colours::white);
-            b->setColour (juce::TextButton::textColourOnId, juce::Colours::white);
             b->setLookAndFeel (&keyLaf);
+            b->setColour (juce::TextButton::textColourOffId, Theme::get().text);
             b->onClick = [this, insert, label]
             {
                 if (label == "Shift") { setShift (! shifted); return; }
@@ -131,7 +140,6 @@ private:
         for (const char* p = r3; *p; ++p)
             addKey (juce::String::charToString ((juce::juce_wchar) (juce::uint8) *p),
                     juce::String::charToString ((juce::juce_wchar) (juce::uint8) *p));
-
         addKey ("Shift", {});
         const char* r4 = shift ? "ZXCVBNM" : "zxcvbnm";
         for (const char* p = r4; *p; ++p)
@@ -142,8 +150,7 @@ private:
         addKey ("Enter", "\n");
     }
 
-    BigKeyLaf keyLaf;
+    SoftKeyLaf keyLaf;
     juce::OwnedArray<juce::TextButton> keyButtons;
-    juce::TextButton closeBtn;
     bool shifted = false;
 };

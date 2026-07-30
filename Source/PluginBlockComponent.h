@@ -15,6 +15,7 @@ public:
     void setBypassed    (bool b);
     void setBlockColour (juce::Colour c);
     void setDeleteHover (bool h);
+    void setDragging (bool d);
 
     std::function<void(int)> onSelected;
     std::function<void(int)> onBypassToggled;
@@ -46,6 +47,7 @@ private:
     bool deleteHover = false;
     bool draggingBypass = false;
     bool didStartDrag = false;
+    bool dragging = false;
     juce::Colour blockColour { 0xff3a7ca5 };
     juce::Rectangle<int> bypassBounds;
     juce::Point<int> dragStart;

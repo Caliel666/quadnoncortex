@@ -1,4 +1,5 @@
 #include "PluginBrowser.h"
+#include "Theme.h"
 
 //==============================================================================
 PluginBrowser::PluginRow::PluginRow (const juce::PluginDescription& d, PluginBrowser& owner)
@@ -113,7 +114,7 @@ void PluginBrowser::choosePlugin (const juce::PluginDescription& desc)
 
 void PluginBrowser::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xee0a0a0a));
+    g.fillAll (Theme::get().overlay);
 }
 
 void PluginBrowser::resized()
