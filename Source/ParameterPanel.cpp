@@ -193,11 +193,14 @@ ParameterPanel::ParameterPanel (MidiLearnManager& learnMgr) : midiLearn (learnMg
     bypassClearButton.onClick = [this]
     {
         if (currentPluginIndex < 0) return;
-        midiLearn.clearBinding (currentPluginIndex, -2);
+        const int idx = currentPluginIndex;
+        midiLearn.clearBinding (idx, -2);
+        // Update UI directly (don't rely solely on onBindingsChanged chain)
         bypassLearnButton.setButtonText ("LEARN");
-        bypassLearnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff455a64));
+        bypassLearnButton.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
         bypassClearButton.setEnabled (false);
         bypassClearButton.setAlpha (0.35f);
+        bypassClearButton.setVisible (true);
     };
     addAndMakeVisible (bypassClearButton);
 
@@ -210,36 +213,12 @@ ParameterPanel::ParameterPanel (MidiLearnManager& learnMgr) : midiLearn (learnMg
 
     {
         auto prev = midiLearn.onBindingsChanged;
-        midiLearn.onBindingsChanged = [this, prev]
+        juce::Component::SafePointer<ParameterPanel> safe (this);
+        midiLearn.onBindingsChanged = [safe, prev]
         {
             if (prev) prev();
-            for (auto* row : rows)
-                row->updateLearnButton();
-            if (currentPluginIndex >= 0)
-            {
-                const bool learningBypass = midiLearn.isLearning()
-                                           && midiLearn.getLearnPlugin() == currentPluginIndex
-                                           && midiLearn.getLearnParam() == -2;
-                const bool has = midiLearn.findBinding (currentPluginIndex, -2) != nullptr;
-                if (learningBypass)
-                {
-                    bypassLearnButton.setButtonText ("...");
-                    bypassLearnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffe67e22));
-                }
-                else if (has)
-                {
-                    bypassLearnButton.setButtonText ("MIDI");
-                    bypassLearnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff27ae60));
-                }
-                else
-                {
-                    bypassLearnButton.setButtonText ("LEARN");
-                    bypassLearnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff455a64));
-                }
-                bypassClearButton.setVisible (true);
-                bypassClearButton.setEnabled (has && ! learningBypass);
-                bypassClearButton.setAlpha ((has && ! learningBypass) ? 1.0f : 0.35f);
-            }
+            if (safe != nullptr)
+                safe->refreshMidiButtons();
         };
     }
 }
@@ -247,6 +226,37 @@ ParameterPanel::ParameterPanel (MidiLearnManager& learnMgr) : midiLearn (learnMg
 ParameterPanel::~ParameterPanel()
 {
     clear();
+}
+
+void ParameterPanel::refreshMidiButtons()
+{
+    for (auto* row : rows)
+        row->updateLearnButton();
+
+    if (currentPluginIndex < 0) return;
+
+    const bool learningBypass = midiLearn.isLearning()
+                                && midiLearn.getLearnPlugin() == currentPluginIndex
+                                && midiLearn.getLearnParam() == -2;
+    const bool has = midiLearn.findBinding (currentPluginIndex, -2) != nullptr;
+    if (learningBypass)
+    {
+        bypassLearnButton.setButtonText ("...");
+        bypassLearnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffe67e22));
+    }
+    else if (has)
+    {
+        bypassLearnButton.setButtonText ("MIDI");
+        bypassLearnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff27ae60));
+    }
+    else
+    {
+        bypassLearnButton.setButtonText ("LEARN");
+        bypassLearnButton.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
+    }
+    bypassClearButton.setVisible (true);
+    bypassClearButton.setEnabled (has && ! learningBypass);
+    bypassClearButton.setAlpha ((has && ! learningBypass) ? 1.0f : 0.35f);
 }
 
 void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginIndex,
@@ -259,61 +269,51 @@ void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginI
     currentPluginIndex = pluginIndex;
     bypassCallback = std::move (onBypass);
     colourCallback = std::move (onColour);
-    colourButton.onClick = [this] { if (colourCallback) colourCallback(); };
 
-    if (instance == nullptr) return;
+    if (instance == nullptr)
+    {
+        titleLabel.setText ({}, juce::dontSendNotification);
+        setVisible (false);
+        return;
+    }
 
     titleLabel.setText (instance->getName(), juce::dontSendNotification);
     updateBypass (bypassed);
-    if (midiLearn.findBinding (pluginIndex, -2) != nullptr)
-    {
-        bypassLearnButton.setButtonText ("MIDI");
-        bypassLearnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff27ae60));
-        bypassClearButton.setVisible (true);
-            bypassClearButton.setEnabled (true);
-            bypassClearButton.setAlpha (1.0f);
-    }
-    else
-    {
-        bypassLearnButton.setButtonText ("LEARN");
-        bypassLearnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff455a64));
-        bypassClearButton.setVisible (true);
-            bypassClearButton.setEnabled (false);
-            bypassClearButton.setAlpha (0.35f);
-    }
+    colourButton.onClick = [this] { if (colourCallback) colourCallback(); };
 
     const auto& params = instance->getParameters();
     for (int i = 0; i < params.size(); ++i)
     {
-        auto* p = params[i];
-        p->addListener (this);
-        auto* row = rows.add (new ParamRow (i, p, midiLearn, pluginIndex));
-        row->slider.addListener (this);
-        content.addAndMakeVisible (row);
+        if (auto* p = params[i])
+        {
+            if (! p->isAutomatable()) continue;
+            auto* row = rows.add (new ParamRow (i, p, midiLearn, pluginIndex));
+            content.addAndMakeVisible (row);
+            p->addListener (this);
+            if (! row->isToggle)
+                row->slider.addListener (this);
+        }
     }
+
+    setVisible (true);
     resized();
+    refreshMidiButtons();
 }
 
 void ParameterPanel::clear()
 {
     if (currentPlugin != nullptr)
+    {
         for (auto* p : currentPlugin->getParameters())
-            p->removeListener (this);
-
+            if (p != nullptr)
+                p->removeListener (this);
+    }
     rows.clear();
     currentPlugin = nullptr;
     currentPluginIndex = -1;
+    bypassCallback = nullptr;
+    colourCallback = nullptr;
     titleLabel.setText ({}, juce::dontSendNotification);
-    content.setSize (0, 0);
-}
-
-void ParameterPanel::parameterValueChanged (int parameterIndex, float newValue)
-{
-    // Called from audio/message thread – hop to message thread
-    juce::MessageManager::callAsync ([this, parameterIndex, newValue]
-    {
-        updateParamValue (parameterIndex, newValue);
-    });
 }
 
 void ParameterPanel::updateParamValue (int paramIndex, float value)
@@ -330,7 +330,32 @@ void ParameterPanel::updateBypass (bool bypassed)
 {
     bypassButton.setButtonText (bypassed ? "BYPASSED" : "BYPASS");
     bypassButton.setColour (juce::TextButton::buttonColourId,
-                            bypassed ? juce::Colour (0xffe74c3c) : juce::Colour (0xff546e7a));
+                            bypassed ? juce::Colour (0xffc0392b) : juce::Colour (0xff546e7a));
+}
+
+void ParameterPanel::parameterValueChanged (int parameterIndex, float newValue)
+{
+    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<ParameterPanel> (this),
+                                      parameterIndex, newValue]
+    {
+        if (safe != nullptr)
+            safe->updateParamValue (parameterIndex, newValue);
+    });
+}
+
+void ParameterPanel::sliderValueChanged (juce::Slider* s)
+{
+    if (currentPlugin == nullptr) return;
+    for (auto* row : rows)
+    {
+        if (&row->slider == s && row->parameter != nullptr)
+        {
+            const float v = (float) s->getValue();
+            row->parameter->setValueNotifyingHost (v);
+            row->valueLabel.setText (row->parameter->getText (v, 32), juce::dontSendNotification);
+            break;
+        }
+    }
 }
 
 void ParameterPanel::paint (juce::Graphics& g)
@@ -363,20 +388,5 @@ void ParameterPanel::resized()
     {
         row->setBounds (6, y, content.getWidth() - 12, kRowHeight);
         y += kRowHeight;
-    }
-}
-
-void ParameterPanel::sliderValueChanged (juce::Slider* s)
-{
-    if (currentPlugin == nullptr) return;
-    for (auto* row : rows)
-    {
-        if (&row->slider == s && row->parameter != nullptr)
-        {
-            const float v = (float) s->getValue();
-            row->parameter->setValueNotifyingHost (v);
-            row->valueLabel.setText (row->parameter->getText (v, 32), juce::dontSendNotification);
-            break;
-        }
     }
 }

@@ -16,6 +16,7 @@ public:
     void clear();
     void updateParamValue (int paramIndex, float value);
     void updateBypass (bool bypassed);
+    void refreshMidiButtons();
 
     void paint (juce::Graphics&) override;
     void resized() override;

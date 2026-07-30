@@ -62,7 +62,10 @@ public:
         {
             if (it->second.pluginIndex == pluginIndex && it->second.paramIndex == paramIndex
                 && it->second.globalAction.isEmpty())
+            {
+                lastToggleState.erase (it->first);
                 it = bindings.erase (it);
+            }
             else
                 ++it;
         }
@@ -299,9 +302,12 @@ private:
             dummy = juce::MidiMessage::noteOn (channel, note, valueNow);
 
         cancelLearn();
-        applyBinding (b, valueNow, dummy);
 
-        // Clear edge memory so the next physical move isn't suppressed
+        // Parameter/bypass: apply learn value immediately.
+        // Globals: do NOT fire on learn — next physical press triggers once.
+        if (b.globalAction.isEmpty())
+            applyBinding (b, valueNow, dummy);
+
         lastToggleState.erase (key);
 
         if (onBindingsChanged) onBindingsChanged();

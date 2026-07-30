@@ -21,6 +21,7 @@ private:
     void refreshThemeList();
     void applyThemeColours();
     void rebuildMidiInputList();
+    void refreshMapRows();
 
     AudioEngine& audioEngine;
     MidiLearnManager& midiLearn;

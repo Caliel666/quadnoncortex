@@ -158,25 +158,43 @@ MainComponent::MainComponent()
     audioEngine.getPluginChain().loadKnownPluginsFromDisk();
 
     refreshPresetList();
-    if (AppSettings::get().lastPreset.isNotEmpty())
-    {
-        auto f = AppSettings::get().getPresetsDir().getChildFile (AppSettings::get().lastPreset);
-        if (f.existsAsFile())
-        {
-            for (int i = 0; i < presetFiles.size(); ++i)
-                if (presetFiles[i] == f)
-                {
-                    currentPresetIndex = i;
-                    presetBox.setSelectedItemIndex (i, juce::dontSendNotification);
-                    break;
-                }
-            loadPreset (f);
-        }
-    }
 
     startTimerHz (30);
     setSize (1024, 600);
-    juce::MessageManager::callAsync ([this] { startBootScan(); });
+
+    // Load last preset after first layout so block positions/sizes are valid
+    juce::MessageManager::callAsync ([this]
+    {
+        if (AppSettings::get().lastPreset.isNotEmpty())
+        {
+            auto f = AppSettings::get().getPresetsDir().getChildFile (AppSettings::get().lastPreset);
+            if (! f.existsAsFile())
+            {
+                // filename-only match
+                for (auto& pf : presetFiles)
+                    if (pf.getFileName() == AppSettings::get().lastPreset
+                        || pf.getFileNameWithoutExtension() == AppSettings::get().lastPreset)
+                    {
+                        f = pf;
+                        break;
+                    }
+            }
+            if (f.existsAsFile())
+            {
+                for (int i = 0; i < presetFiles.size(); ++i)
+                    if (presetFiles[i] == f || presetFiles[i].getFileName() == f.getFileName())
+                    {
+                        currentPresetIndex = i;
+                        presetBox.setSelectedItemIndex (i, juce::dontSendNotification);
+                        break;
+                    }
+                loadPreset (f);
+                rebuildBlocks();
+                resized();
+            }
+        }
+        startBootScan();
+    });
 }
 
 MainComponent::~MainComponent()

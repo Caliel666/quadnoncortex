@@ -5,6 +5,21 @@ void MidiLearnManager::applyBinding (const Binding& b, float normalisedValue, co
 {
     if (b.globalAction.isNotEmpty())
     {
+        // Globals (tuner / preset): one physical toggle = one action.
+        // Must process CC-low to clear edge state, otherwise the next high is ignored.
+        if (msg.isController() && normalisedValue < 0.5f)
+        {
+            const int key = makeKey (b.midiChannel, b.ccNumber, true);
+            lastToggleState[key] = { 0, juce::Time::getMillisecondCounter() };
+            return;
+        }
+        if (msg.isNoteOff() || (msg.isNoteOn() && msg.getVelocity() == 0))
+        {
+            const int key = makeKey (b.midiChannel, b.noteNumber, false);
+            lastToggleState[key] = { 0, juce::Time::getMillisecondCounter() };
+            return;
+        }
+
         if (msg.isNoteOn() || (msg.isController() && normalisedValue >= 0.5f))
         {
             if (! acceptToggleEdge (b, true))
@@ -20,11 +35,10 @@ void MidiLearnManager::applyBinding (const Binding& b, float normalisedValue, co
 
     if (pluginChain == nullptr) return;
 
-    // Guard: binding may point at a removed/shifted slot
     if (! juce::isPositiveAndBelow (b.pluginIndex, pluginChain->getNumPlugins()))
         return;
 
-    // Bypass — absolute mapping (toggle switches send 0 / 127)
+    // Bypass — absolute mapping (unchanged; works with toggle switches)
     if (b.paramIndex == -2)
     {
         const int idx = b.pluginIndex;

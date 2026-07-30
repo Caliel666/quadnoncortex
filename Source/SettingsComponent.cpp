@@ -228,15 +228,23 @@ SettingsComponent::SettingsComponent (AudioEngine& engine, MidiLearnManager& lea
 
     {
         auto prev = midiLearn.onBindingsChanged;
-        midiLearn.onBindingsChanged = [this, prev]
+        juce::Component::SafePointer<SettingsComponent> safe (this);
+        midiLearn.onBindingsChanged = [safe, prev]
         {
             if (prev) prev();
-            for (auto* r : mapRows) r->refresh();
+            if (safe != nullptr)
+                safe->refreshMapRows();
         };
     }
 
     applyThemeColours();
     setSize (720, 720);
+}
+
+void SettingsComponent::refreshMapRows()
+{
+    for (auto* r : mapRows)
+        r->refresh();
 }
 
 void SettingsComponent::rebuildMidiInputList()
