@@ -33,7 +33,17 @@ SettingsComponent::MapRow::MapRow (const juce::String& actionName, const juce::S
 void SettingsComponent::MapRow::refresh()
 {
     auto& th = Theme::get();
-    if (auto* b = learn.findGlobal (action))
+    // Only THIS row is in learn mode — not every global map
+    const bool learningThis = learn.isLearning()
+                              && learn.getLearnGlobalAction() == action;
+
+    if (learningThis)
+    {
+        bindingLabel.setText ("Move a control...", juce::dontSendNotification);
+        learnBtn.setButtonText ("...");
+        learnBtn.setColour (juce::TextButton::buttonColourId, th.warning);
+    }
+    else if (auto* b = learn.findGlobal (action))
     {
         juce::String s = b->ccNumber >= 0
             ? ("Ch" + juce::String (b->midiChannel) + " CC" + juce::String (b->ccNumber))
@@ -41,12 +51,6 @@ void SettingsComponent::MapRow::refresh()
         bindingLabel.setText (s, juce::dontSendNotification);
         learnBtn.setButtonText ("MIDI");
         learnBtn.setColour (juce::TextButton::buttonColourId, th.success);
-    }
-    else if (learn.isLearning())
-    {
-        bindingLabel.setText ("Move a control...", juce::dontSendNotification);
-        learnBtn.setButtonText ("...");
-        learnBtn.setColour (juce::TextButton::buttonColourId, th.warning);
     }
     else
     {
@@ -177,7 +181,7 @@ SettingsComponent::SettingsComponent (AudioEngine& engine, MidiLearnManager& lea
     };
     themePage.addAndMakeVisible (applyThemeBtn);
 
-    versionLabel.setText ("Version " + juce::String (UpdateChecker::kCurrentVersion),
+    versionLabel.setText ("Version " + UpdateChecker::currentVersion(),
                           juce::dontSendNotification);
     versionLabel.setFont (juce::FontOptions (16.0f, juce::Font::bold));
     versionLabel.setColour (juce::Label::textColourId, th.text);

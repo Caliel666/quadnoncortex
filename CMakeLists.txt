@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(quadnoncortex VERSION 1.0.0)
+project(quadnoncortex VERSION 1.0.2)
 
 if(NOT DEFINED JUCE_PATH)
     set(JUCE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/JUCE")
@@ -16,7 +16,7 @@ juce_add_gui_app(quadnoncortex
     PRODUCT_NAME "quadnoncortex"
     COMPANY_NAME "quadnoncortex"
     BUNDLE_ID    "com.quadnoncortex.app"
-    VERSION      "1.0.0"
+    VERSION      "1.0.2"
     NEEDS_CURL   FALSE
     NEEDS_WEB_BROWSER FALSE
 )
@@ -57,6 +57,7 @@ target_compile_definitions(quadnoncortex
         JUCE_USE_CURL=0
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:quadnoncortex,JUCE_PRODUCT_NAME>"
         JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:quadnoncortex,JUCE_VERSION>"
+        QUADNONCORTEX_VERSION="$<TARGET_PROPERTY:quadnoncortex,JUCE_VERSION>"
         JUCE_PLUGINHOST_VST3=1
         JUCE_PLUGINHOST_VST=0
         JUCE_PLUGINHOST_AU=0

@@ -186,23 +186,25 @@ public:
         }
         else if (message.isNoteOff() || (message.isNoteOn() && message.getVelocity() == 0))
         {
-            // Absolute note mappings: note-off → 0 (for bypass / toggles)
+            // Note-off → 0 (bypass / params) OR edge for globals (preset / tuner off)
             const int key = makeKey (message.getChannel(), message.getNoteNumber(), false);
             auto it = bindings.find (key);
-            if (it != bindings.end() && it->second.paramIndex == -2)
+            if (it != bindings.end())
                 applyBinding (it->second, 0.0f, message);
         }
     }
 
     void saveToXml (juce::XmlElement& parent) const
     {
+        // Presets only store per-plugin parameter maps — globals live in app settings
         auto* root = parent.createNewChildElement ("MidiBindings");
         for (const auto& pair : bindings)
         {
+            if (pair.second.globalAction.isNotEmpty())
+                continue;
             auto* e = root->createNewChildElement ("Binding");
             e->setAttribute ("plugin",  pair.second.pluginIndex);
             e->setAttribute ("param",   pair.second.paramIndex);
-            e->setAttribute ("global",  pair.second.globalAction);
             e->setAttribute ("channel", pair.second.midiChannel);
             e->setAttribute ("cc",      pair.second.ccNumber);
             e->setAttribute ("note",    pair.second.noteNumber);
@@ -211,7 +213,14 @@ public:
 
     void loadFromXml (const juce::XmlElement& parent)
     {
-        bindings.clear();
+        // Keep global (tuner/preset) maps — they must survive preset switches
+        std::map<int, Binding> keptGlobals;
+        for (auto& pair : bindings)
+            if (pair.second.globalAction.isNotEmpty())
+                keptGlobals[pair.first] = pair.second;
+
+        bindings = std::move (keptGlobals);
+
         if (auto* root = parent.getChildByName ("MidiBindings"))
         {
             for (auto* e : root->getChildIterator())
@@ -224,6 +233,9 @@ public:
                 b.midiChannel  = e->getIntAttribute ("channel");
                 b.ccNumber     = e->getIntAttribute ("cc", -1);
                 b.noteNumber   = e->getIntAttribute ("note", -1);
+                // Ignore globals embedded in old presets
+                if (b.globalAction.isNotEmpty())
+                    continue;
                 const bool isCC = b.ccNumber >= 0;
                 const int  num  = isCC ? b.ccNumber : b.noteNumber;
                 bindings[makeKey (b.midiChannel, num, isCC)] = b;
@@ -303,12 +315,11 @@ private:
 
         cancelLearn();
 
-        // Parameter/bypass: apply learn value immediately.
-        // Globals: do NOT fire on learn — next physical press triggers once.
-        if (b.globalAction.isEmpty())
-            applyBinding (b, valueNow, dummy);
-
+        // Clear debounce so the learn message (and the next press) aren't suppressed
         lastToggleState.erase (key);
+
+        // Apply immediately — same as continuous parameters after mapping
+        applyBinding (b, valueNow, dummy);
 
         if (onBindingsChanged) onBindingsChanged();
     }

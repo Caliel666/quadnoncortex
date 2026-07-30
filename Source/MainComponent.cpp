@@ -289,11 +289,14 @@ void MainComponent::setTab (int tab)
     resized();
 }
 
-void MainComponent::handleGlobalMidi (const juce::String& action, float)
+void MainComponent::handleGlobalMidi (const juce::String& action, float value)
 {
-    if (action == "tuner") setTab (currentTab == 0 ? 1 : 0);
-    else if (action == "presetNext") presetNext();
-    else if (action == "presetPrev") presetPrev();
+    if (action == "tuner")
+        setTab (value >= 0.5f ? 1 : 0); // absolute: ON = tuner, OFF = board
+    else if (action == "presetNext")
+        presetNext();
+    else if (action == "presetPrev")
+        presetPrev();
 }
 
 void MainComponent::cycleBlockColour (int index)

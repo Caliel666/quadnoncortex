@@ -7,7 +7,17 @@ class UpdateChecker
 public:
     static constexpr const char* kRepoApi =
         "https://api.github.com/repos/Caliel666/quadnoncortex/releases/latest";
-    static constexpr const char* kCurrentVersion = "1.0.0";
+    /** App version from CMake project VERSION (QUADNONCORTEX_VERSION / JUCE). */
+    static juce::String currentVersion()
+    {
+       #if defined (QUADNONCORTEX_VERSION)
+        return juce::String (QUADNONCORTEX_VERSION);
+       #elif defined (JUCE_APPLICATION_VERSION_STRING)
+        return juce::String (JUCE_APPLICATION_VERSION_STRING);
+       #else
+        return "1.0.2";
+       #endif
+    }
 
     struct Result
     {
@@ -50,7 +60,7 @@ public:
         // GitHub API wants a User-Agent
         auto opts = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
                         .withHttpRequestCmd ("GET")
-                        .withExtraHeaders ("User-Agent: quadnoncortex/1.0.0\r\nAccept: application/vnd.github+json\r\n")
+                        .withExtraHeaders ("User-Agent: quadnoncortex/" + currentVersion() + "\r\nAccept: application/vnd.github+json\r\n")
                         .withConnectionTimeoutMs (12000);
 
         std::unique_ptr<juce::InputStream> stream (url.createInputStream (opts));
@@ -80,15 +90,15 @@ public:
             }
 
             r.ok = true;
-            if (compareVersions (kCurrentVersion, r.latestTag) >= 0)
+            if (compareVersions (currentVersion(), r.latestTag) >= 0)
             {
                 r.updateAvailable = false;
-                r.message = "You're on the latest version (" + juce::String (kCurrentVersion) + ").";
+                r.message = "You're on the latest version (" + currentVersion() + ").";
                 return r;
             }
 
             r.updateAvailable = true;
-            r.message = "Update available: " + r.latestTag + " (current " + juce::String (kCurrentVersion) + ")";
+            r.message = "Update available: " + r.latestTag + " (current " + currentVersion() + ")";
 
            #if JUCE_WINDOWS
             const juce::String prefer = ".exe";
@@ -153,7 +163,7 @@ public:
         juce::URL url (downloadUrl);
         auto opts = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
                         .withHttpRequestCmd ("GET")
-                        .withExtraHeaders ("User-Agent: quadnoncortex/1.0.0\r\n")
+                        .withExtraHeaders ("User-Agent: quadnoncortex/" + currentVersion() + "\r\n")
                         .withConnectionTimeoutMs (60000);
 
         std::unique_ptr<juce::InputStream> in (url.createInputStream (opts));

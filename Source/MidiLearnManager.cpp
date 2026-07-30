@@ -3,34 +3,74 @@
 
 void MidiLearnManager::applyBinding (const Binding& b, float normalisedValue, const juce::MidiMessage& msg)
 {
+    // -------------------------------------------------------------------------
+    // GLOBAL ACTIONS
+    // -------------------------------------------------------------------------
     if (b.globalAction.isNotEmpty())
     {
-        // Globals (tuner / preset): one physical toggle = one action.
-        // Must process CC-low to clear edge state, otherwise the next high is ignored.
-        if (msg.isController() && normalisedValue < 0.5f)
-        {
-            const int key = makeKey (b.midiChannel, b.ccNumber, true);
-            lastToggleState[key] = { 0, juce::Time::getMillisecondCounter() };
-            return;
-        }
-        if (msg.isNoteOff() || (msg.isNoteOn() && msg.getVelocity() == 0))
-        {
-            const int key = makeKey (b.midiChannel, b.noteNumber, false);
-            lastToggleState[key] = { 0, juce::Time::getMillisecondCounter() };
-            return;
-        }
+        const bool isCC = b.ccNumber >= 0;
+        const int  num  = isCC ? b.ccNumber : b.noteNumber;
+        const int  key  = makeKey (b.midiChannel, num, isCC);
+        const auto now  = juce::Time::getMillisecondCounter();
 
-        if (msg.isNoteOn() || (msg.isController() && normalisedValue >= 0.5f))
+        // ---- TUNER: absolute like a parameter (ON = tuner, OFF = board) ----
+        if (b.globalAction == "tuner")
         {
-            if (! acceptToggleEdge (b, true))
+            bool on = false;
+            if (msg.isController()
+                || msg.isNoteOff()
+                || (msg.isNoteOn() && msg.getVelocity() == 0))
+                on = normalisedValue >= 0.5f;
+            else if (msg.isNoteOn())
+                on = true;
+            else
                 return;
 
-            juce::MessageManager::callAsync ([this, action = b.globalAction, normalisedValue]
+            // Debounce only identical rapid packets
+            auto it = lastToggleState.find (key);
+            const int want = on ? 1 : 0;
+            if (it != lastToggleState.end()
+                && it->second.value == want
+                && (now - it->second.ms) < 80)
+                return;
+
+            lastToggleState[key] = { want, now };
+
+            juce::MessageManager::callAsync ([this, on]
             {
-                if (onGlobalAction) onGlobalAction (action, normalisedValue);
+                if (onGlobalAction)
+                    onGlobalAction ("tuner", on ? 1.0f : 0.0f);
             });
+            return;
         }
-        return;
+
+        // ---- PRESET NEXT / PREV: fire on EVERY press (ON and OFF edges) ----
+        // so a latching footswitch advances on both stomp directions
+        {
+            bool edge = false;
+            if (msg.isController())
+                edge = true; // any CC change (0 or 127)
+            else if (msg.isNoteOn() && msg.getVelocity() > 0)
+                edge = true;
+            else if (msg.isNoteOff() || (msg.isNoteOn() && msg.getVelocity() == 0))
+                edge = true;
+
+            if (! edge)
+                return;
+
+            auto it = lastToggleState.find (key);
+            if (it != lastToggleState.end() && (now - it->second.ms) < 120)
+                return;
+
+            lastToggleState[key] = { 1, now };
+
+            juce::MessageManager::callAsync ([this, action = b.globalAction]
+            {
+                if (onGlobalAction)
+                    onGlobalAction (action, 1.0f);
+            });
+            return;
+        }
     }
 
     if (pluginChain == nullptr) return;
@@ -38,7 +78,9 @@ void MidiLearnManager::applyBinding (const Binding& b, float normalisedValue, co
     if (! juce::isPositiveAndBelow (b.pluginIndex, pluginChain->getNumPlugins()))
         return;
 
-    // Bypass — absolute mapping (unchanged; works with toggle switches)
+    // -------------------------------------------------------------------------
+    // BYPASS — absolute
+    // -------------------------------------------------------------------------
     if (b.paramIndex == -2)
     {
         const int idx = b.pluginIndex;
@@ -64,6 +106,9 @@ void MidiLearnManager::applyBinding (const Binding& b, float normalisedValue, co
         return;
     }
 
+    // -------------------------------------------------------------------------
+    // PARAMETERS — every message applies the value
+    // -------------------------------------------------------------------------
     if (auto* instance = pluginChain->getPluginInstance (b.pluginIndex))
     {
         const auto& params = instance->getParameters();
