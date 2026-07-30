@@ -1,0 +1,10 @@
+C:/Users/Demuriel/Documents/quadnoncortex/build/CMakeFiles/quadnoncortex.dir
+C:/Users/Demuriel/Documents/quadnoncortex/build/CMakeFiles/quadnoncortex_rc_lib.dir
+C:/Users/Demuriel/Documents/quadnoncortex/build/CMakeFiles/INSTALL.dir
+C:/Users/Demuriel/Documents/quadnoncortex/build/CMakeFiles/ALL_BUILD.dir
+C:/Users/Demuriel/Documents/quadnoncortex/build/CMakeFiles/ZERO_CHECK.dir
+C:/Users/Demuriel/Documents/quadnoncortex/build/JUCE/CMakeFiles/INSTALL.dir
+C:/Users/Demuriel/Documents/quadnoncortex/build/JUCE/CMakeFiles/ALL_BUILD.dir
+C:/Users/Demuriel/Documents/quadnoncortex/build/JUCE/modules/CMakeFiles/INSTALL.dir
+C:/Users/Demuriel/Documents/quadnoncortex/build/JUCE/extras/Build/CMakeFiles/INSTALL.dir
+C:/Users/Demuriel/Documents/quadnoncortex/build/JUCE/extras/Build/juceaide/CMakeFiles/INSTALL.dir

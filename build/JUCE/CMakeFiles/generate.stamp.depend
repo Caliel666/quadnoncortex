@@ -1,0 +1,12 @@
+# CMake generation dependency list for this directory.
+C:/Program Files/CMake/share/cmake-4.4/Modules/BasicConfigVersion-SamePatchVersion.cmake.in
+C:/Program Files/CMake/share/cmake-4.4/Modules/CMakeDependentOption.cmake
+C:/Program Files/CMake/share/cmake-4.4/Modules/CMakePackageConfigHelpers.cmake
+C:/Program Files/CMake/share/cmake-4.4/Modules/WriteBasicConfigVersionFile.cmake
+C:/Users/Demuriel/Documents/quadnoncortex/JUCE/CMakeLists.txt
+C:/Users/Demuriel/Documents/quadnoncortex/JUCE/extras/Build/CMake/JUCECheckAtomic.cmake
+C:/Users/Demuriel/Documents/quadnoncortex/JUCE/extras/Build/CMake/JUCEConfig.cmake.in
+C:/Users/Demuriel/Documents/quadnoncortex/JUCE/extras/Build/CMake/JUCEHelperTargets.cmake
+C:/Users/Demuriel/Documents/quadnoncortex/JUCE/extras/Build/CMake/JUCEModuleSupport.cmake
+C:/Users/Demuriel/Documents/quadnoncortex/JUCE/extras/Build/CMake/JUCEUtils.cmake
+C:/Users/Demuriel/Documents/quadnoncortex/build/CMakeFiles/cmake.verify_globs

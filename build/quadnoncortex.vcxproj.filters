@@ -1,0 +1,188 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\Main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\MainComponent.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\AudioEngine.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\PluginChain.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\PluginBlockComponent.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\ParameterPanel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\MidiLearnManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\PluginBrowser.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\PluginScanOverlay.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\TunerComponent.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\SettingsComponent.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_audio_utils\juce_audio_utils.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_audio_processors\juce_audio_processors.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_gui_extra\juce_gui_extra.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_gui_basics\juce_gui_basics.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_gui_basics\juce_gui_basics_2.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_gui_basics\juce_gui_basics_3.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_gui_basics\juce_gui_basics_4.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_gui_basics\juce_gui_basics_5.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_graphics\juce_graphics.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_graphics\juce_graphics_Harfbuzz.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_graphics\juce_graphics_Sheenbidi.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_graphics\juce_graphics_libjpg_1.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_graphics\juce_graphics_libjpg_2.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_graphics\juce_graphics_libjpg_3.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_graphics\juce_graphics_libpng.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_graphics\juce_graphics_lunasvg.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_events\juce_events.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_core\juce_core.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_core\juce_core_CompilationTime.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_core\juce_core_zlib.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_data_structures\juce_data_structures.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_audio_processors_headless\juce_audio_processors_headless.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_audio_processors_headless\juce_audio_processors_headless_ara.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_audio_processors_headless\juce_audio_processors_headless_lv2_libs.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_audio_basics\juce_audio_basics.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_audio_formats\juce_audio_formats.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_audio_formats\juce_audio_formats_flac_1.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_audio_formats\juce_audio_formats_flac_2.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Demuriel\Documents\quadnoncortex\JUCE\modules\juce_audio_devices\juce_audio_devices.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="C:\Users\Demuriel\Documents\quadnoncortex\build\quadnoncortex_artefacts\JuceLibraryCode\JuceHeader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\MainComponent.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\AudioEngine.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\PluginChain.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\PluginBlockComponent.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\ParameterPanel.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\MidiLearnManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\PluginBrowser.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\PluginScanOverlay.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\TunerComponent.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\AppSettings.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Demuriel\Documents\quadnoncortex\Source\SettingsComponent.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\Demuriel\Documents\quadnoncortex\build\CMakeFiles\5a70be807723963376917e54298a4452\JuceHeader.h.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Demuriel\Documents\quadnoncortex\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Object Include="C:\Users\Demuriel\Documents\quadnoncortex\build\quadnoncortex_rc_lib.dir\$(Configuration)\quadnoncortex_resources.res">
+      <Filter>Object Libraries</Filter>
+    </Object>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{B14393F6-FD9D-3A58-9757-B2B7686DF99A}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{335A9D7C-05F5-334A-B6FD-DA8BB822E0EF}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Object Libraries">
+      <UniqueIdentifier>{89356CCF-0835-3609-9742-33C30563EDC4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{8D28E7F0-46C9-3F54-A385-C9177CEBB3D0}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
