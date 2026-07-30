@@ -207,6 +207,11 @@ ParameterPanel::ParameterPanel (MidiLearnManager& learnMgr) : midiLearn (learnMg
     colourButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff5c6bc0));
     addAndMakeVisible (colourButton);
 
+    openEditorButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff37474f));
+    openEditorButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    openEditorButton.onClick = [this] { if (openEditorCallback) openEditorCallback(); };
+    addAndMakeVisible (openEditorButton);
+
     viewport.setViewedComponent (&content, false);
     viewport.setScrollBarsShown (true, false);
     addAndMakeVisible (viewport);
@@ -261,7 +266,8 @@ void ParameterPanel::refreshMidiButtons()
 
 void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginIndex,
                                 bool bypassed, std::function<void()> onBypass,
-                                std::function<void()> onColour)
+                                std::function<void()> onColour,
+                                std::function<void()> onOpenEditor)
 {
     clear();
     midiLearn.cancelLearn();
@@ -269,6 +275,7 @@ void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginI
     currentPluginIndex = pluginIndex;
     bypassCallback = std::move (onBypass);
     colourCallback = std::move (onColour);
+    openEditorCallback = std::move (onOpenEditor);
 
     if (instance == nullptr)
     {
@@ -280,6 +287,8 @@ void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginI
     titleLabel.setText (instance->getName(), juce::dontSendNotification);
     updateBypass (bypassed);
     colourButton.onClick = [this] { if (colourCallback) colourCallback(); };
+    openEditorButton.onClick = [this] { if (openEditorCallback) openEditorCallback(); };
+    openEditorButton.setEnabled (instance != nullptr && instance->hasEditor());
 
     const auto& params = instance->getParameters();
     for (int i = 0; i < params.size(); ++i)
@@ -313,6 +322,7 @@ void ParameterPanel::clear()
     currentPluginIndex = -1;
     bypassCallback = nullptr;
     colourCallback = nullptr;
+    openEditorCallback = nullptr;
     titleLabel.setText ({}, juce::dontSendNotification);
 }
 
@@ -371,6 +381,8 @@ void ParameterPanel::resized()
 {
     auto r = getLocalBounds().reduced (14, 12);
     auto top = r.removeFromTop (40).reduced (4, 2);
+    openEditorButton.setBounds (top.removeFromLeft (48));
+    top.removeFromLeft (6);
     bypassClearButton.setBounds (top.removeFromRight (44));
     top.removeFromRight (4);
     bypassLearnButton.setBounds (top.removeFromRight (88));

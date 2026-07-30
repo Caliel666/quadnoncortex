@@ -1,5 +1,6 @@
 #include <JuceHeader.h>
 #include "MainComponent.h"
+#include "DevLog.h"
 
 class QuadnonCortexApplication : public juce::JUCEApplication
 {

@@ -92,6 +92,8 @@ private:
     float tabAnim = 1.0f;
     float presetAnim = 1.0f;
     bool presetAnimating = false;
+    bool presetLoading = false;
+    juce::uint32 lastPresetSwitchMs = 0;
     std::function<void(juce::String)> pendingNameCallback;
     juce::String pendingNameText;
 

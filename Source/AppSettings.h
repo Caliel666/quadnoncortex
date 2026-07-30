@@ -40,10 +40,10 @@ public:
         if (! f.existsAsFile()) return;
         if (auto xml = juce::XmlDocument::parse (f))
         {
-            if (auto* dev = xml->getChildByName ("DEVICESETUP"))
-                audioDeviceStateXml = std::make_unique<juce::XmlElement> (*dev);
-            else if (auto* dev = xml->getChildByName ("AudioDeviceState"))
-                audioDeviceStateXml = std::make_unique<juce::XmlElement> (*dev);
+            if (auto* deviceSetup = xml->getChildByName ("DEVICESETUP"))
+                audioDeviceStateXml = std::make_unique<juce::XmlElement> (*deviceSetup);
+            else if (auto* deviceState = xml->getChildByName ("AudioDeviceState"))
+                audioDeviceStateXml = std::make_unique<juce::XmlElement> (*deviceState);
 
             inputGain  = (float) xml->getDoubleAttribute ("inputGain",  1.0);
             outputGain = (float) xml->getDoubleAttribute ("outputGain", 1.0);
@@ -67,6 +67,10 @@ public:
                         midiInputEnabled[e->getStringAttribute ("id")]
                             = e->getBoolAttribute ("enabled", true);
             }
+
+            globalMidiXml.reset();
+            if (auto* g = xml->getChildByName ("GlobalMidiBindings"))
+                globalMidiXml = std::make_unique<juce::XmlElement> (*g);
         }
     }
 
@@ -96,6 +100,9 @@ public:
             e->setAttribute ("enabled", p.second ? 1 : 0);
         }
 
+        if (globalMidiXml != nullptr)
+            root.addChildElement (new juce::XmlElement (*globalMidiXml));
+
         root.writeTo (getSettingsFile());
     }
 
@@ -114,6 +121,7 @@ public:
     /** identifier → enabled. Missing devices kept until next explicit save. */
     std::map<juce::String, bool> midiInputEnabled;
     bool midiInputsLoaded = false;
+    std::unique_ptr<juce::XmlElement> globalMidiXml;
 
     void setMidiInputEnabled (const juce::String& id, bool en)
     {

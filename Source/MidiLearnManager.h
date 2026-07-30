@@ -77,10 +77,14 @@ public:
         for (auto it = bindings.begin(); it != bindings.end(); )
         {
             if (it->second.globalAction == action)
+            {
+                lastToggleState.erase (it->first);
                 it = bindings.erase (it);
+            }
             else
                 ++it;
         }
+        saveGlobalsToSettings();
         if (onBindingsChanged) onBindingsChanged();
     }
 
@@ -213,13 +217,13 @@ public:
 
     void loadFromXml (const juce::XmlElement& parent)
     {
-        // Keep global (tuner/preset) maps — they must survive preset switches
+        // Keep global maps — never cleared by preset load
         std::map<int, Binding> keptGlobals;
         for (auto& pair : bindings)
             if (pair.second.globalAction.isNotEmpty())
                 keptGlobals[pair.first] = pair.second;
 
-        bindings = std::move (keptGlobals);
+        bindings.clear();
 
         if (auto* root = parent.getChildByName ("MidiBindings"))
         {
@@ -233,15 +237,26 @@ public:
                 b.midiChannel  = e->getIntAttribute ("channel");
                 b.ccNumber     = e->getIntAttribute ("cc", -1);
                 b.noteNumber   = e->getIntAttribute ("note", -1);
-                // Ignore globals embedded in old presets
                 if (b.globalAction.isNotEmpty())
-                    continue;
+                    continue; // globals never from presets
                 const bool isCC = b.ccNumber >= 0;
                 const int  num  = isCC ? b.ccNumber : b.noteNumber;
-                bindings[makeKey (b.midiChannel, num, isCC)] = b;
+                const int  key  = makeKey (b.midiChannel, num, isCC);
+                // Never overwrite a global MIDI key with a parameter map
+                if (keptGlobals.count (key) > 0)
+                    continue;
+                bindings[key] = b;
             }
         }
+
+        // Restore globals on top (win over any preset param on same CC)
+        for (auto& g : keptGlobals)
+            bindings[g.first] = g.second;
     }
+
+    /** Persist globals into AppSettings (call after learn/clear global). */
+    void saveGlobalsToSettings() const;
+    void loadGlobalsFromSettings();
 
     /** Fired on message thread after a param value is changed by MIDI. */
     std::function<void(int pluginIndex, int paramIndex, float value)> onParamChangedByMidi;
@@ -315,11 +330,11 @@ private:
 
         cancelLearn();
 
-        // Clear debounce so the learn message (and the next press) aren't suppressed
         lastToggleState.erase (key);
-
-        // Apply immediately — same as continuous parameters after mapping
         applyBinding (b, valueNow, dummy);
+
+        if (b.globalAction.isNotEmpty())
+            saveGlobalsToSettings();
 
         if (onBindingsChanged) onBindingsChanged();
     }

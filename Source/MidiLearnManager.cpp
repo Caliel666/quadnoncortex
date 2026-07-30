@@ -1,5 +1,6 @@
 #include "MidiLearnManager.h"
 #include "PluginChain.h"
+#include "AppSettings.h"
 
 void MidiLearnManager::applyBinding (const Binding& b, float normalisedValue, const juce::MidiMessage& msg)
 {
@@ -138,5 +139,43 @@ void MidiLearnManager::applyBinding (const Binding& b, float normalisedValue, co
                     onParamChangedByMidi (pIdx, prIdx, v);
             });
         }
+    }
+}
+
+
+void MidiLearnManager::saveGlobalsToSettings() const
+{
+    auto xml = std::make_unique<juce::XmlElement> ("GlobalMidiBindings");
+    for (const auto& pair : bindings)
+    {
+        if (pair.second.globalAction.isEmpty()) continue;
+        auto* e = xml->createNewChildElement ("Binding");
+        e->setAttribute ("global",  pair.second.globalAction);
+        e->setAttribute ("channel", pair.second.midiChannel);
+        e->setAttribute ("cc",      pair.second.ccNumber);
+        e->setAttribute ("note",    pair.second.noteNumber);
+    }
+    AppSettings::get().globalMidiXml = std::move (xml);
+    AppSettings::get().save();
+}
+
+void MidiLearnManager::loadGlobalsFromSettings()
+{
+    auto* src = AppSettings::get().globalMidiXml.get();
+    if (src == nullptr) return;
+    for (auto* e : src->getChildIterator())
+    {
+        if (! e->hasTagName ("Binding")) continue;
+        Binding b;
+        b.globalAction = e->getStringAttribute ("global");
+        b.midiChannel  = e->getIntAttribute ("channel");
+        b.ccNumber     = e->getIntAttribute ("cc", -1);
+        b.noteNumber   = e->getIntAttribute ("note", -1);
+        b.pluginIndex  = -1;
+        b.paramIndex   = -1;
+        if (b.globalAction.isEmpty()) continue;
+        const bool isCC = b.ccNumber >= 0;
+        const int  num  = isCC ? b.ccNumber : b.noteNumber;
+        bindings[makeKey (b.midiChannel, num, isCC)] = b;
     }
 }

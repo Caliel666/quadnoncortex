@@ -1,4 +1,5 @@
 #include "PluginChain.h"
+#include "DevLog.h"
 
 static void configureBuses (juce::AudioPluginInstance& inst, double sr, int bs, bool prepared)
 {
@@ -140,7 +141,14 @@ void PluginChain::releaseResources()
 
 void PluginChain::process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
+    if (suspended.load())
+        return;
+
     const juce::ScopedLock sl (processLock);
+
+    // Double-check after taking lock (loadState may have swapped under us)
+    if (suspended.load())
+        return;
 
     for (auto& s : plugins)
     {
@@ -152,14 +160,13 @@ void PluginChain::process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
             const int outCh = s.instance->getTotalNumOutputChannels();
             s.instance->processBlock (buffer, midi);
 
-            // Mono plugin → duplicate to stereo so the chain stays stereo
             if (outCh == 1 && buffer.getNumChannels() >= 2)
                 buffer.copyFrom (1, 0, buffer, 0, 0, buffer.getNumSamples());
         }
         catch (...)
         {
-            // Never let a plugin exception kill the audio callback
             s.bypassed = true;
+            DevLog::log ("PluginChain::process EXCEPTION — plugin auto-bypassed");
         }
     }
 }
@@ -294,28 +301,66 @@ void PluginChain::saveState (juce::XmlElement& parent) const
     }
 }
 
+void PluginChain::closeAllEditors()
+{
+    // Delete every active editor BEFORE touching plugin instances.
+    // Destroying NAM (and many VST3s) while an editor is open crashes hard.
+    for (auto& s : plugins)
+    {
+        if (s.instance == nullptr) continue;
+        if (auto* ed = s.instance->getActiveEditor())
+        {
+            DevLog::log ("closeAllEditors: deleting editor for " + s.instance->getName());
+            delete ed; // AudioProcessorEditor dtor notifies the processor
+        }
+    }
+}
+
 void PluginChain::loadState (const juce::XmlElement& parent)
 {
-    // Take ownership of old plugins under lock, destroy outside audio callback
+    DevLog::log ("PluginChain::loadState BEGIN (suspend on)");
+    suspended.store (true);
+
+    closeAllEditors();
+
+    // Let any in-flight process() exit the critical section
+    {
+        const juce::ScopedLock sl (processLock);
+    }
+
     std::vector<Slot> doomed;
     {
         const juce::ScopedLock sl (processLock);
         doomed.swap (plugins);
         plugins.clear();
+        DevLog::log ("PluginChain::loadState emptied chain, destroying "
+                     + juce::String ((int) doomed.size()) + " old plugin(s)");
     }
 
-    for (auto& s : doomed)
+    for (size_t i = 0; i < doomed.size(); ++i)
     {
-        if (s.instance != nullptr)
+        auto& s = doomed[i];
+        if (s.instance == nullptr) continue;
+        const auto name = s.instance->getName();
+        DevLog::log ("  releasing [" + juce::String ((int) i) + "] " + name);
+        try
         {
-            try
-            {
-                s.instance->releaseResources();
-                s.instance->setPlayHead (nullptr);
-            }
-            catch (...) {}
-            try { s.instance.reset(); }
-            catch (...) { s.instance.release(); }
+            s.instance->releaseResources();
+            s.instance->setPlayHead (nullptr);
+        }
+        catch (...)
+        {
+            DevLog::log ("  releaseResources EXCEPTION on " + name);
+        }
+        try
+        {
+            s.instance.reset();
+            DevLog::log ("  destroyed " + name);
+        }
+        catch (...)
+        {
+            DevLog::log ("  destructor EXCEPTION on " + name + " — leaking instance");
+            s.instance.release();
         }
     }
     doomed.clear();
@@ -331,30 +376,51 @@ void PluginChain::loadState (const juce::XmlElement& parent)
                 if (desc.loadFromXml (*descXml))
                 {
                     juce::String error;
+                    DevLog::log ("  loading plugin: " + desc.name);
                     const int idx = addPlugin (desc, error);
-                    if (idx >= 0)
+                    if (idx < 0)
                     {
+                        DevLog::log ("  FAILED to load " + desc.name + ": " + error);
+                        continue;
+                    }
+                    DevLog::log ("  loaded idx=" + juce::String (idx) + " " + desc.name);
+                    {
+                        const juce::ScopedLock sl (processLock);
+                        if (juce::isPositiveAndBelow (idx, (int) plugins.size()))
                         {
-                            const juce::ScopedLock sl (processLock);
-                            if (juce::isPositiveAndBelow (idx, (int) plugins.size()))
-                            {
-                                plugins[(size_t) idx].bypassed = pluginXml->getBoolAttribute ("bypassed");
-                                if (pluginXml->hasAttribute ("colour"))
-                                    plugins[(size_t) idx].colour =
-                                        juce::Colour ((juce::uint32) pluginXml->getIntAttribute ("colour"));
-                            }
+                            plugins[(size_t) idx].bypassed = pluginXml->getBoolAttribute ("bypassed");
+                            // Keep suspended slots silent until fully configured
+                            if (pluginXml->hasAttribute ("colour"))
+                                plugins[(size_t) idx].colour =
+                                    juce::Colour ((juce::uint32) pluginXml->getIntAttribute ("colour"));
                         }
-                        if (auto* stateXml = pluginXml->getChildByName ("State"))
+                    }
+                    if (auto* stateXml = pluginXml->getChildByName ("State"))
+                    {
+                        juce::MemoryBlock state;
+                        state.fromBase64Encoding (stateXml->getAllSubText());
+                        if (auto* inst = getPluginInstance (idx))
                         {
-                            juce::MemoryBlock state;
-                            state.fromBase64Encoding (stateXml->getAllSubText());
-                            if (auto* inst = getPluginInstance (idx))
+                            try
+                            {
+                                inst->setStateInformation (state.getData(), (int) state.getSize());
+                                DevLog::log ("  state restored (" + juce::String ((int) state.getSize()) + " bytes)");
+                            }
+                            catch (...)
+                            {
+                                DevLog::log ("  setStateInformation EXCEPTION");
+                            }
+                            if (prepared)
                             {
                                 try
                                 {
-                                    inst->setStateInformation (state.getData(), (int) state.getSize());
+                                    configureBuses (*inst, currentSampleRate, currentBlockSize, true);
+                                    DevLog::log ("  re-prepared after state");
                                 }
-                                catch (...) {}
+                                catch (...)
+                                {
+                                    DevLog::log ("  re-prepare EXCEPTION");
+                                }
                             }
                         }
                     }
@@ -362,4 +428,8 @@ void PluginChain::loadState (const juce::XmlElement& parent)
             }
         }
     }
+
+    // Leave suspended=true — caller (loadPreset) resumes after prepare()
+    DevLog::log ("PluginChain::loadState END — " + juce::String (getNumPlugins())
+                 + " plugin(s), still suspended until prepare");
 }

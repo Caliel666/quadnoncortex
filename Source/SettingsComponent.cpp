@@ -446,9 +446,14 @@ void SettingsComponent::resized()
         audioViewport.setBounds (m);
         if (deviceSelector != nullptr)
         {
-            // Match MIDI/Theme: left column, comfortable width for stock selector
-            const int contentW = juce::jmin (620, juce::jmax (360, audioViewport.getWidth()));
-            const int contentH = juce::jmax (m.getHeight(), 1100);
+            const int viewH = audioViewport.getHeight();
+            const int viewW = audioViewport.getWidth();
+            // Short but wide: use full width + denser rows so less scrolling
+            const bool shortWide = viewH < 480 && viewW > 700;
+            deviceSelector->setItemHeight (shortWide ? 28 : 40);
+            const int contentW = shortWide ? juce::jmax (viewW - 8, 600)
+                                          : juce::jmin (620, juce::jmax (360, viewW));
+            const int contentH = juce::jmax (viewH, shortWide ? 700 : 1100);
             deviceSelector->setBounds (0, 0, contentW, contentH);
         }
     }

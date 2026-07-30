@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(quadnoncortex VERSION 1.0.2)
+project(quadnoncortex VERSION 1.0.3)
+
+# Multi-config (VS): add Dev = RelWithDebInfo + QUADNONCORTEX_DEV
+if (CMAKE_CONFIGURATION_TYPES)
+    set (CMAKE_CONFIGURATION_TYPES "Debug;Release;RelWithDebInfo;Dev" CACHE STRING "" FORCE)
+endif()
+set (CMAKE_CXX_FLAGS_DEV             "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
+set (CMAKE_C_FLAGS_DEV               "${CMAKE_C_FLAGS_RELWITHDEBINFO}")
+set (CMAKE_EXE_LINKER_FLAGS_DEV      "${CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO}")
+set (CMAKE_SHARED_LINKER_FLAGS_DEV   "${CMAKE_SHARED_LINKER_FLAGS_RELWITHDEBINFO}")
 
 if(NOT DEFINED JUCE_PATH)
     set(JUCE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/JUCE")
@@ -16,7 +25,7 @@ juce_add_gui_app(quadnoncortex
     PRODUCT_NAME "quadnoncortex"
     COMPANY_NAME "quadnoncortex"
     BUNDLE_ID    "com.quadnoncortex.app"
-    VERSION      "1.0.2"
+    VERSION      "1.0.3"
     NEEDS_CURL   FALSE
     NEEDS_WEB_BROWSER FALSE
 )
@@ -70,6 +79,8 @@ target_compile_definitions(quadnoncortex
         JUCE_JACK=0
         JUCE_DISPLAY_SPLASH_SCREEN=0
         JUCE_REPORT_APP_USAGE=0
+        $<$<CONFIG:Dev>:QUADNONCORTEX_DEV=1>
+        $<$<CONFIG:Debug>:QUADNONCORTEX_DEV=1>
 )
 
 target_link_libraries(quadnoncortex

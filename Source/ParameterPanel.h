@@ -2,6 +2,45 @@
 #include <JuceHeader.h>
 #include "MidiLearnManager.h"
 
+/** Horizontal drag adjusts value; vertical drag scrolls the parameter list (touch-friendly). */
+class TouchSlider : public juce::Slider
+{
+public:
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        start = e.position;
+        scrolling = false;
+        juce::Slider::mouseDown (e);
+    }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        const auto d = e.position - start;
+        if (! scrolling && std::abs (d.y) > std::abs (d.x) && std::abs (d.y) > 14.0f)
+            scrolling = true;
+        if (scrolling)
+        {
+            if (auto* v = findParentComponentOfClass<juce::Viewport>())
+            {
+                auto pos = v->getViewPosition();
+                v->setViewPosition (pos.x, pos.y - (int) (e.position.y - start.y));
+                start = e.position;
+            }
+            return;
+        }
+        juce::Slider::mouseDrag (e);
+    }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (! scrolling)
+            juce::Slider::mouseUp (e);
+        scrolling = false;
+    }
+private:
+    juce::Point<float> start;
+    bool scrolling = false;
+};
+
+
 class ParameterPanel : public juce::Component,
                        public juce::Slider::Listener,
                        public juce::AudioProcessorParameter::Listener
@@ -12,7 +51,8 @@ public:
 
     void setPlugin (juce::AudioPluginInstance* instance, int pluginIndex,
                     bool bypassed, std::function<void()> onBypass,
-                    std::function<void()> onColour = nullptr);
+                    std::function<void()> onColour = nullptr,
+                    std::function<void()> onOpenEditor = nullptr);
     void clear();
     void updateParamValue (int paramIndex, float value);
     void updateBypass (bool bypassed);
@@ -41,7 +81,7 @@ private:
         juce::AudioProcessorParameter* parameter = nullptr;
         juce::Label nameLabel;
         juce::Label valueLabel;
-        juce::Slider slider;
+        TouchSlider slider;
         juce::ToggleButton toggle;
         juce::TextButton learnButton { "LEARN" };
         juce::TextButton clearMidiButton { "x" };
@@ -61,8 +101,10 @@ private:
     juce::TextButton bypassLearnButton { "LEARN" };
     juce::TextButton bypassClearButton { "x" };
     juce::TextButton colourButton { "COLOR" };
+    juce::TextButton openEditorButton { "UI" };
     std::function<void()> bypassCallback;
     std::function<void()> colourCallback;
+    std::function<void()> openEditorCallback;
 
     static constexpr int kRowHeight = 96;
 

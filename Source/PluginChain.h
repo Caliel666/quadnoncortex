@@ -1,5 +1,6 @@
 #pragma once
 #include <JuceHeader.h>
+#include <atomic>
 
 class PluginChain
 {
@@ -79,6 +80,13 @@ public:
     void saveState (juce::XmlElement& parent) const;
     void loadState (const juce::XmlElement& parent);
 
+    /** Must be called on the message thread before destroying plugins. */
+    void closeAllEditors();
+
+    /** While true, process() is a no-op (safe during preset load). */
+    void setSuspended (bool s) { suspended.store (s); }
+    bool isSuspended() const { return suspended.load(); }
+
 private:
     struct Slot
     {
@@ -96,6 +104,7 @@ private:
     bool   prepared          = false;
     juce::AudioBuffer<float> tempBuffer;
     juce::CriticalSection processLock;
+    std::atomic<bool> suspended { false };
     juce::Array<int> pendingRemoves;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginChain)

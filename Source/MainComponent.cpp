@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "DevLog.h"
 #include "Theme.h"
 
 static const juce::uint32 kPalette[] = {
@@ -156,6 +157,7 @@ MainComponent::MainComponent()
 
     audioEngine.initialise();
     audioEngine.getPluginChain().loadKnownPluginsFromDisk();
+    audioEngine.getMidiLearnManager().loadGlobalsFromSettings();
 
     refreshPresetList();
 
@@ -320,21 +322,40 @@ void MainComponent::showPluginEditor (int index)
     class EditorWin : public juce::DocumentWindow
     {
     public:
+        std::function<void()> onClosed;
+
         EditorWin (const juce::String& name, juce::AudioProcessorEditor* content)
-            : DocumentWindow (name, juce::Colours::black, DocumentWindow::closeButton)
+            : DocumentWindow (name, juce::Colour (0xff1a1d23),
+                              DocumentWindow::closeButton)
         {
-            setUsingNativeTitleBar (true);
+            setUsingNativeTitleBar (false);
+            setTitleBarHeight (36);
             setContentOwned (content, true);
             setResizable (true, false);
             centreWithSize (juce::jmax (400, content->getWidth()),
-                            juce::jmax (300, content->getHeight() + 30));
+                            juce::jmax (300, content->getHeight() + 40));
             setVisible (true);
             setAlwaysOnTop (true);
             toFront (true);
         }
-        void closeButtonPressed() override { setVisible (false); }
+
+        void closeButtonPressed() override
+        {
+            // Fully tear down editor (not just hide) so the processor is free
+            clearContentComponent();
+            setVisible (false);
+            if (onClosed)
+                onClosed();
+        }
     };
-    editorWindow = std::make_unique<EditorWin> (inst->getName(), ed);
+
+    auto* win = new EditorWin (inst->getName(), ed);
+    win->onClosed = [this]
+    {
+        editorWindow = nullptr; // destroy window object too
+        DevLog::log ("plugin editor closed and destroyed");
+    };
+    editorWindow.reset (win);
 }
 
 void MainComponent::paint (juce::Graphics& g)
@@ -424,8 +445,11 @@ void MainComponent::resized()
         outputFader.setBounds (right.reduced (4, 6));
 
         const bool showParams = selectedIndex >= 0;
-        // When a plugin is selected, params take lower portion; board keeps the rest
-        const int paramH = showParams ? juce::jmax (180, (r.getHeight() * 40) / 100) : 0;
+        // Low screens: give parameters most of the height; shrink the board
+        const int h = r.getHeight();
+        const int paramH = ! showParams ? 0
+            : (h < 420 ? juce::jmax (220, (h * 58) / 100)
+                       : juce::jmax (180, (h * 42) / 100));
         if (parameterPanel)
         {
             parameterPanel->setBounds (r.removeFromBottom (paramH));
@@ -477,7 +501,11 @@ void MainComponent::resized()
         const float fillH = 0.82f;
 
         int blockH = (int) ((availH * fillH - gap * (numRows + 1)) / (float) numRows);
-        blockH = juce::jlimit (100, 180, blockH);
+        // When params are open on a short screen, allow smaller blocks
+        if (showParams && getHeight() < 500)
+            blockH = juce::jlimit (56, 120, blockH);
+        else
+            blockH = juce::jlimit (100, 180, blockH);
 
         blocksContent.setSize (availW, availH);
         const int gridH = numRows * blockH + (numRows + 1) * gap;
@@ -488,7 +516,9 @@ void MainComponent::resized()
             const auto& row = rows.getReference (r);
             const int rowBudget = (int) (availW * fillW) - gap * (row.count - 1);
             // Minimum width so short names stay large enough to tap
-            const int minW = juce::jlimit (100, 160, blockH - 10);
+            const int minW = showParams && getHeight() < 500
+                ? juce::jlimit (64, 120, blockH)
+                : juce::jlimit (100, 160, blockH - 10);
 
             juce::Array<int> widths;
             int used = 0;
@@ -610,6 +640,21 @@ void MainComponent::rebuildBlocks()
 
 void MainComponent::selectPlugin (int index)
 {
+    // Tap same block again → hide parameter panel
+    if (index >= 0 && index == selectedIndex)
+    {
+        selectedIndex = -1;
+        for (int i = 0; i < blocks.size(); ++i)
+            blocks[i]->setSelected (false);
+        if (parameterPanel)
+        {
+            parameterPanel->clear();
+            parameterPanel->setVisible (false);
+        }
+        resized();
+        return;
+    }
+
     selectedIndex = index;
     for (int i = 0; i < blocks.size(); ++i)
         blocks[i]->setSelected (i == selectedIndex);
@@ -628,7 +673,8 @@ void MainComponent::selectPlugin (int index)
                                            parameterPanel->updateBypass (
                                                audioEngine.getPluginChain().isBypassed (selectedIndex));
                                        },
-                                       [this] { showColourPicker (selectedIndex); });
+                                       [this] { showColourPicker (selectedIndex); },
+                                       [this] { showPluginEditor (selectedIndex); });
         }
         else
         {
@@ -885,16 +931,21 @@ void MainComponent::newPreset()
         parameterPanel->setVisible (false);
     }
     audioEngine.setMuted (true);
+    audioEngine.getPluginChain().setSuspended (true);
+    juce::Thread::sleep (30);
 
-    // Empty chain via blank XML
     juce::XmlElement empty ("QuadnonCortexPreset");
     empty.createNewChildElement ("PluginChain");
     audioEngine.getPluginChain().loadState (empty);
-    // Clear midi maps for fresh board? Keep globals - only clear plugin maps by loading empty midi section
-    juce::XmlElement midiClear ("MidiMaps");
     audioEngine.getMidiLearnManager().loadFromXml (empty);
 
+    if (auto* dev = audioEngine.getDeviceManager().getCurrentAudioDevice())
+        audioEngine.getPluginChain().prepare (dev->getCurrentSampleRate(),
+                                              dev->getCurrentBufferSizeSamples());
+
+    audioEngine.getPluginChain().setSuspended (false);
     audioEngine.setMuted (false);
+    DevLog::log ("newPreset complete");
     currentPresetIndex = -1;
     presetBox.setSelectedItemIndex (-1, juce::dontSendNotification);
     rebuildBlocks();
@@ -1030,15 +1081,21 @@ void MainComponent::renamePreset()
 void MainComponent::loadPreset (const juce::File& f)
 {
     if (! f.existsAsFile()) return;
+    if (presetLoading)
+    {
+        DevLog::log ("loadPreset SKIPPED (already loading): " + f.getFileName());
+        return;
+    }
+    presetLoading = true;
+
+    DevLog::log ("loadPreset BEGIN: " + f.getFullPathName());
 
     presetAnimating = true;
     blocksViewport.setAlpha (0.25f);
     if (parameterPanel) parameterPanel->setAlpha (0.25f);
 
-    // Close any open plugin editor first
-    editorWindow = nullptr;
+    audioEngine.getMidiLearnManager().cancelLearn();
 
-    // Clear UI selection so ParameterPanel releases parameter listeners
     selectedIndex = -1;
     if (parameterPanel)
     {
@@ -1046,46 +1103,101 @@ void MainComponent::loadPreset (const juce::File& f)
         parameterPanel->setVisible (false);
     }
 
-    // Mute audio briefly while we swap the chain
+    // 1) Close our editor window (releases owned AudioProcessorEditor)
+    if (editorWindow != nullptr)
+    {
+        DevLog::log ("loadPreset: closing editor window");
+        editorWindow->clearContentComponent();
+        editorWindow = nullptr;
+    }
+
+    // 2) Delete any remaining active editors on processors (belt and suspenders)
+    audioEngine.getPluginChain().closeAllEditors();
+
     const bool wasMuted = audioEngine.isMuted();
     audioEngine.setMuted (true);
+    audioEngine.getPluginChain().setSuspended (true);
 
-    if (auto xml = juce::XmlDocument::parse (f))
+    // Let audio thread + editor teardown settle
+    juce::Thread::sleep (50);
+
+    const juce::File presetFile = f;
+    // Run the heavy unload/load on the next message-loop turn so editor
+    // destructors have fully finished (NAM is sensitive to this).
+    juce::MessageManager::callAsync ([this, presetFile, wasMuted]
     {
         try
         {
-            audioEngine.getPluginChain().loadState (*xml);
-            audioEngine.getMidiLearnManager().loadFromXml (*xml);
-            if (xml->hasAttribute ("inputGain"))
+            if (auto xml = juce::XmlDocument::parse (presetFile))
             {
-                audioEngine.setInputGain ((float) xml->getDoubleAttribute ("inputGain"));
-                inputFader.setValue (audioEngine.getInputGain(), juce::dontSendNotification);
+                audioEngine.getPluginChain().loadState (*xml);
+
+                if (auto* dev = audioEngine.getDeviceManager().getCurrentAudioDevice())
+                {
+                    DevLog::log ("loadPreset prepare sr=" + juce::String (dev->getCurrentSampleRate())
+                                 + " bs=" + juce::String (dev->getCurrentBufferSizeSamples()));
+                    audioEngine.getPluginChain().prepare (dev->getCurrentSampleRate(),
+                                                          dev->getCurrentBufferSizeSamples());
+                }
+                else
+                {
+                    DevLog::log ("loadPreset WARNING: no audio device");
+                }
+
+                audioEngine.getMidiLearnManager().loadFromXml (*xml);
+
+                if (xml->hasAttribute ("inputGain"))
+                {
+                    audioEngine.setInputGain ((float) xml->getDoubleAttribute ("inputGain"));
+                    inputFader.setValue (audioEngine.getInputGain(), juce::dontSendNotification);
+                }
+                if (xml->hasAttribute ("outputGain"))
+                {
+                    audioEngine.setOutputGain ((float) xml->getDoubleAttribute ("outputGain"));
+                    outputFader.setValue (audioEngine.getOutputGain(), juce::dontSendNotification);
+                }
+
+                AppSettings::get().lastPreset = presetFile.getFileName();
+                AppSettings::get().save();
             }
-            if (xml->hasAttribute ("outputGain"))
+            else
             {
-                audioEngine.setOutputGain ((float) xml->getDoubleAttribute ("outputGain"));
-                outputFader.setValue (audioEngine.getOutputGain(), juce::dontSendNotification);
+                DevLog::log ("loadPreset FAILED to parse XML");
             }
         }
-        catch (...) {}
+        catch (const std::exception& ex)
+        {
+            DevLog::log (juce::String ("loadPreset EXCEPTION: ") + ex.what());
+        }
+        catch (...)
+        {
+            DevLog::log ("loadPreset UNKNOWN EXCEPTION");
+        }
 
-        AppSettings::get().lastPreset = f.getFileName();
-        AppSettings::get().save();
-    }
+        rebuildBlocks();
+        audioEngine.getPluginChain().setSuspended (false);
+        audioEngine.setMuted (wasMuted);
+        resized();
 
-    rebuildBlocks();
-    audioEngine.setMuted (wasMuted);
-    resized();
+        DevLog::log ("loadPreset END: " + juce::String (audioEngine.getPluginChain().getNumPlugins())
+                     + " plugins active");
 
-    juce::Desktop::getInstance().getAnimator().fadeIn (&blocksViewport, 280);
-    if (parameterPanel && parameterPanel->isVisible())
-        juce::Desktop::getInstance().getAnimator().fadeIn (parameterPanel.get(), 280);
-    juce::Timer::callAfterDelay (300, [this] { presetAnimating = false; });
+        juce::Desktop::getInstance().getAnimator().fadeIn (&blocksViewport, 280);
+        juce::Timer::callAfterDelay (400, [this]
+        {
+            presetAnimating = false;
+            presetLoading = false;
+            DevLog::log ("loadPreset unlock (loading flag cleared)");
+        });
+    });
 }
 
 void MainComponent::presetNext()
 {
-    if (presetFiles.isEmpty()) return;
+    if (presetFiles.isEmpty() || presetLoading) return;
+    const auto now = juce::Time::getMillisecondCounter();
+    if (now - lastPresetSwitchMs < 280) return;
+    lastPresetSwitchMs = now;
     currentPresetIndex = (currentPresetIndex + 1) % presetFiles.size();
     presetBox.setSelectedItemIndex (currentPresetIndex, juce::dontSendNotification);
     loadPreset (presetFiles[currentPresetIndex]);
@@ -1093,7 +1205,10 @@ void MainComponent::presetNext()
 
 void MainComponent::presetPrev()
 {
-    if (presetFiles.isEmpty()) return;
+    if (presetFiles.isEmpty() || presetLoading) return;
+    const auto now = juce::Time::getMillisecondCounter();
+    if (now - lastPresetSwitchMs < 280) return;
+    lastPresetSwitchMs = now;
     currentPresetIndex = (currentPresetIndex - 1 + presetFiles.size()) % presetFiles.size();
     presetBox.setSelectedItemIndex (currentPresetIndex, juce::dontSendNotification);
     loadPreset (presetFiles[currentPresetIndex]);
@@ -1161,6 +1276,10 @@ void MainComponent::itemDropped (const SourceDetails& d)
 
 void MainComponent::mouseDown (const juce::MouseEvent& e)
 {
+    // Tap the main UI → close plugin editor (helps when native title bar is off-screen)
+    if (editorWindow != nullptr && editorWindow->isVisible())
+        editorWindow = nullptr;
+
     // Click empty board / background → deselect (ignore clicks on blocks themselves)
     if (dynamic_cast<PluginBlockComponent*> (e.eventComponent) != nullptr)
         return;
