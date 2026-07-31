@@ -6,7 +6,7 @@ class QuadnonCortexApplication : public juce::JUCEApplication
 {
 public:
     const juce::String getApplicationName() override       { return "quadnoncortex"; }
-    const juce::String getApplicationVersion() override    { return "1.0.0"; }
+    const juce::String getApplicationVersion() override    { return ProjectInfo::versionString; }
     bool moreThanOneInstanceAllowed() override             { return false; }
 
     void initialise (const juce::String&) override

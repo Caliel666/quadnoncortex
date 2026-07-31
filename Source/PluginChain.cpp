@@ -328,10 +328,17 @@ void PluginChain::closeAllEditors()
     for (auto& s : plugins)
     {
         if (s.instance == nullptr) continue;
-        if (auto* ed = s.instance->getActiveEditor())
+        // Snapshot pointer — getActiveEditor may change during delete
+        juce::AudioProcessorEditor* ed = s.instance->getActiveEditor();
+        if (ed == nullptr) continue;
+        DevLog::log ("closeAllEditors: deleting editor for " + s.instance->getName());
+        try
         {
-            DevLog::log ("closeAllEditors: deleting editor for " + s.instance->getName());
             delete ed; // AudioProcessorEditor dtor notifies the processor
+        }
+        catch (...)
+        {
+            DevLog::log ("closeAllEditors: editor destructor threw — continuing");
         }
     }
 }

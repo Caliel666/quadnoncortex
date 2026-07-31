@@ -9,6 +9,7 @@
 #include "SettingsComponent.h"
 #include "AppSettings.h"
 #include "OnScreenKeyboard.h"
+#include "IconButton.h"
 
 class MainComponent : public juce::Component,
                       public juce::DragAndDropContainer,
@@ -48,6 +49,8 @@ private:
     void presetNext();
     void presetPrev();
     void refreshPresetList();
+    void updatePresetNameDisplay();
+    void showPresetPickerOverlay();
     void handleGlobalMidi (const juce::String& action, float value);
     void openSettings();
     void cycleBlockColour (int index);
@@ -64,15 +67,15 @@ private:
 
     AudioEngine audioEngine;
 
-    juce::TextButton prevPresetBtn { "<" };
-    juce::TextButton nextPresetBtn { ">" };
-    juce::ComboBox   presetBox;
-    juce::TextButton newPresetBtn { "NEW" };
-    juce::TextButton savePresetBtn { "SAVE" };
-    juce::TextButton renamePresetBtn { "REN" };
-    juce::TextButton addButton     { "+" };
-    juce::TextButton settingsBtn   { "SET" };
-    juce::Label      titleLabel;
+    IconButton prevPresetBtn { IconButton::Icon::ChevronUp, {}, true };
+    IconButton nextPresetBtn { IconButton::Icon::ChevronDown, {}, true };
+    juce::Label      presetNameLabel;   // big Quad Cortex-style name (tap opens picker)
+    IconButton newPresetBtn { IconButton::Icon::None, "NEW" };
+    IconButton savePresetBtn { IconButton::Icon::Save };
+    IconButton renamePresetBtn { IconButton::Icon::Pencil };
+    IconButton addButton { IconButton::Icon::Plus };
+    IconButton settingsBtn { IconButton::Icon::Gear };
+    std::unique_ptr<juce::Component> presetPickerOverlay;
 
     juce::Slider inputFader, outputFader;
     juce::Label  inLabel { {}, "IN" }, outLabel { {}, "OUT" };
@@ -109,11 +112,14 @@ private:
     juce::Array<juce::File> presetFiles;
     int currentPresetIndex = -1;
 
-    static constexpr int kTopBar = 64;
+    static constexpr int kTopBarMin = 120;
+    int topBarH = 140; // set in resized()
     static constexpr int kSideW  = 72;
     static constexpr int kTabH   = 56;
     static constexpr int kBlockW = 96; // base; layout scales dynamically
     static constexpr int kBlockH = 96;
+
+    friend struct PresetPickerOverlay;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

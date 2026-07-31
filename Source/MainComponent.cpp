@@ -14,26 +14,22 @@ MainComponent::MainComponent()
     Theme::get().applyToLookAndFeel();
     {
         auto& th = Theme::get();
-        titleLabel.setColour (juce::Label::textColourId, th.text);
-        titleLabel.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-        presetBox.setComponentID ("presetSelector");
-        presetBox.setLookAndFeel (&th.softLaf);
-        presetBox.setColour (juce::ComboBox::backgroundColourId, th.surfaceAlt);
-        presetBox.setColour (juce::ComboBox::textColourId, th.text);
-        presetBox.setColour (juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
-        presetBox.setColour (juce::ComboBox::arrowColourId, th.textDim);
-        for (auto* b : { &prevPresetBtn, &nextPresetBtn, &newPresetBtn, &savePresetBtn,
-                         &renamePresetBtn, &addButton, &settingsBtn, &tabPedal, &tabTuner })
+        presetNameLabel.setColour (juce::Label::textColourId, th.text);
+        presetNameLabel.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
+        for (auto* b : { &tabPedal, &tabTuner })
             th.applyButton (*b);
-        th.applyButton (addButton, true);
-        th.applyButton (savePresetBtn, true);
         th.applyToggleTab (tabPedal, currentTab == 0);
         th.applyToggleTab (tabTuner, currentTab == 1);
     }
 
-    titleLabel.setText ("quadnoncortex", juce::dontSendNotification);
-    titleLabel.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-    addAndMakeVisible (titleLabel);
+    // Big Quad Cortex-style preset name (tap opens spin picker)
+    presetNameLabel.setText ("No Preset", juce::dontSendNotification);
+    presetNameLabel.setFont (juce::FontOptions (72.0f, juce::Font::bold));
+    presetNameLabel.setJustificationType (juce::Justification::centredLeft);
+    presetNameLabel.setInterceptsMouseClicks (true, false);
+    presetNameLabel.setRepaintsOnMouseActivity (true);
+    addAndMakeVisible (presetNameLabel);
+    presetNameLabel.addMouseListener (this, false);
 
     prevPresetBtn.onClick = [this] { presetPrev(); };
     nextPresetBtn.onClick = [this] { presetNext(); };
@@ -45,18 +41,6 @@ MainComponent::MainComponent()
     addAndMakeVisible (newPresetBtn);
     addAndMakeVisible (savePresetBtn);
     addAndMakeVisible (renamePresetBtn);
-
-    presetBox.setTextWhenNothingSelected ("Preset");
-    presetBox.onChange = [this]
-    {
-        const int i = presetBox.getSelectedItemIndex();
-        if (juce::isPositiveAndBelow (i, presetFiles.size()))
-        {
-            currentPresetIndex = i;
-            loadPreset (presetFiles[i]);
-        }
-    };
-    addAndMakeVisible (presetBox);
 
     addButton.onClick = [this] { if (pluginBrowser) pluginBrowser->show (-1); };
     addAndMakeVisible (addButton);
@@ -191,7 +175,7 @@ MainComponent::MainComponent()
                     if (presetFiles[i] == f || presetFiles[i].getFileName() == f.getFileName())
                     {
                         currentPresetIndex = i;
-                        presetBox.setSelectedItemIndex (i, juce::dontSendNotification);
+                        updatePresetNameDisplay();
                         break;
                     }
                 loadPreset (f);
@@ -242,20 +226,15 @@ void MainComponent::openSettings()
         }
         inLabel.setColour (juce::Label::textColourId, th.textDim);
         outLabel.setColour (juce::Label::textColourId, th.textDim);
-        titleLabel.setColour (juce::Label::textColourId, th.text);
-        presetBox.setLookAndFeel (&th.softLaf);
-        presetBox.setColour (juce::ComboBox::backgroundColourId, th.surfaceAlt);
-        presetBox.setColour (juce::ComboBox::textColourId, th.text);
-        presetBox.setColour (juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
-        presetBox.setColour (juce::ComboBox::arrowColourId, th.textDim);
+        presetNameLabel.setColour (juce::Label::textColourId, th.text);
 
-        for (auto* b : { &prevPresetBtn, &nextPresetBtn, &newPresetBtn, &savePresetBtn,
-                         &renamePresetBtn, &addButton, &settingsBtn, &tabPedal, &tabTuner })
+        for (auto* b : { &tabPedal, &tabTuner })
             th.applyButton (*b);
-        th.applyButton (addButton, true);
-        th.applyButton (savePresetBtn, true);
         th.applyToggleTab (tabPedal, currentTab == 0);
         th.applyToggleTab (tabTuner, currentTab == 1);
+        for (auto* b : { &prevPresetBtn, &nextPresetBtn, &newPresetBtn, &savePresetBtn,
+                         &renamePresetBtn, &addButton, &settingsBtn })
+            b->repaint();
 
         if (parameterPanel)
         {
@@ -350,9 +329,10 @@ void MainComponent::showPluginEditor (int index)
 
         void closeButtonPressed() override
         {
-            // The owner destroys this window (and its owned editor) on the next
-            // message-loop turn. Destroying it here would delete `this` while
-            // this callback is still on the stack.
+            // CRITICAL: detach the AudioProcessorEditor *now* so the processor
+            // no longer holds an active editor. Only the empty DocumentWindow
+            // is destroyed asynchronously (cannot delete `this` on the stack).
+            clearContentComponent();
             setVisible (false);
             if (onClosed)
                 onClosed();
@@ -374,6 +354,7 @@ void MainComponent::showPluginEditor (int index)
         });
     };
     editorWindow.reset (win);
+    DevLog::log ("plugin editor opened: " + inst->getName());
 }
 
 void MainComponent::paint (juce::Graphics& g)
@@ -388,7 +369,7 @@ void MainComponent::paint (juce::Graphics& g)
     if (currentTab == 0 && inputFader.isVisible())
     {
         auto left  = getLocalBounds();
-        left.removeFromTop (kTopBar);
+        left.removeFromTop (topBarH);
         left.removeFromBottom (kTabH);
         auto right = left.removeFromRight (kSideW);
         left = left.removeFromLeft (kSideW);
@@ -425,25 +406,57 @@ void MainComponent::resized()
 {
     auto r = getLocalBounds();
 
-    // ---- Top bar ----
-    auto top = r.removeFromTop (kTopBar).reduced (12, 7);
-    titleLabel.setBounds (top.removeFromLeft (145).reduced (2, 4));
-    settingsBtn.setBounds (top.removeFromRight (50).reduced (2));
-    addButton.setBounds (top.removeFromRight (50).reduced (2));
-    renamePresetBtn.setBounds (top.removeFromRight (52).reduced (2));
-    savePresetBtn.setBounds (top.removeFromRight (58).reduced (2));
-    newPresetBtn.setBounds (top.removeFromRight (52).reduced (2));
+    // ---- Top bar: ~24% of height so name + tiles stay large ----
+    topBarH = juce::jlimit (kTopBarMin, 220, getHeight() * 24 / 100);
+    auto top = r.removeFromTop (topBarH).reduced (16, 10);
 
-    const int presetBoxW = juce::jlimit (180, 360, top.getWidth() / 2);
-    const int clusterW = 40 + 4 + presetBoxW + 4 + 40;
-    auto centre = top.withSizeKeepingCentre (juce::jmin (clusterW, top.getWidth()), top.getHeight());
-    prevPresetBtn.setBounds (centre.removeFromLeft (40).reduced (2));
-    presetBox.setBounds (centre.removeFromLeft (presetBoxW).reduced (2, 0));
-    nextPresetBtn.setBounds (centre.removeFromLeft (40).reduced (2));
+    // Layout:  [ ^v ] [ PRESET NAME .............. ] [ icon grid ]
+    const int gap = 8;
+    const int cell = juce::jlimit (52, 80, (top.getHeight() - 2 * gap) / 3);
 
-    // Trash sits below the top bar so it doesn't cover presets
+    // Right icon grid (equal squares)
+    //   [ save ] [ gear ]
+    //   [  ren ] [  +   ]
+    //   [ NEW  ]
+    const int gridW = cell * 2 + gap;
+    auto gridArea = top.removeFromRight (gridW);
+    const int gridH = cell * 3 + gap * 2;
+    auto grid = gridArea.withSizeKeepingCentre (gridW, gridH);
+    top.removeFromRight (12);
+
+    {
+        auto colR = grid.removeFromRight (cell);
+        auto colL = grid.removeFromLeft (cell);
+
+        settingsBtn.setBounds (colR.removeFromTop (cell).reduced (2));
+        colR.removeFromTop (gap);
+        addButton.setBounds (colR.removeFromTop (cell).reduced (2));
+
+        savePresetBtn.setBounds (colL.removeFromTop (cell).reduced (2));
+        colL.removeFromTop (gap);
+        renamePresetBtn.setBounds (colL.removeFromTop (cell).reduced (2));
+        colL.removeFromTop (gap);
+        newPresetBtn.setBounds (colL.removeFromTop (cell).reduced (2));
+    }
+
+    // LEFT: up/down chevrons (flat, no tile)
+    const int navW = juce::jlimit (48, 72, cell);
+    auto nav = top.removeFromLeft (navW);
+    top.removeFromLeft (8);
+    {
+        const int pairH = juce::jmin (nav.getHeight(), cell * 2 + gap);
+        auto band = nav.withSizeKeepingCentre (nav.getWidth(), pairH);
+        prevPresetBtn.setBounds (band.removeFromTop (band.getHeight() / 2));
+        nextPresetBtn.setBounds (band);
+    }
+
+    // Preset name fills the middle
+    presetNameLabel.setBounds (top);
+    updatePresetNameDisplay();
+
+    // Trash sits below the top bar
     if (showTrash)
-        trashZone.setBounds (getWidth() / 2 - 48, kTopBar + 12, 96, 56);
+        trashZone.setBounds (getWidth() / 2 - 48, topBarH + 12, 96, 56);
 
     auto tabs = r.removeFromBottom (kTabH);
     tabPedal.setBounds (tabs.removeFromLeft (tabs.getWidth() / 2).reduced (6, 5));
@@ -756,9 +769,13 @@ void MainComponent::removePlugin (int index)
     lastTime = now;
     if (index < 0) return;
 
-    // Close editor if it belongs to this plugin
+    // Fully detach editor before destroying the plugin instance
     if (editorWindow != nullptr)
+    {
+        editorWindow->clearContentComponent();
         editorWindow = nullptr;
+    }
+    audioEngine.getPluginChain().closeAllEditors();
 
     if (selectedIndex == index)
     {
@@ -799,19 +816,226 @@ void MainComponent::reorderPlugins (int from, int to)
     rebuildBlocks();
 }
 
+
+
+//==============================================================================
+struct PresetPickerOverlay : public juce::Component, private juce::Timer
+{
+    MainComponent& owner;
+    int focusIndex = 0;
+    float animOffset = 0.0f;
+    float targetOffset = 0.0f;
+    float fade = 0.0f;
+    int dragStartY = 0;
+    int dragStartIndex = 0;
+    bool dragging = false;
+
+    explicit PresetPickerOverlay (MainComponent& o) : owner (o)
+    {
+        focusIndex = juce::jlimit (0, juce::jmax (0, o.presetFiles.size() - 1),
+                                   o.currentPresetIndex >= 0 ? o.currentPresetIndex : 0);
+        startTimerHz (60);
+        setOpaque (false);
+    }
+
+    juce::String nameAt (int i) const
+    {
+        if (! juce::isPositiveAndBelow (i, owner.presetFiles.size()))
+            return {};
+        return owner.presetFiles[i].getFileNameWithoutExtension();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto& th = Theme::get();
+        g.setColour (th.overlay.withMultipliedAlpha (fade));
+        g.fillAll();
+
+        const float W = (float) getWidth();
+        const float H = (float) getHeight();
+        const float midY = H * 0.5f;
+        const float rowH = juce::jlimit (64.0f, 130.0f, H * 0.16f);
+
+        // No coloured selection chrome — clarity from size + opacity only
+        for (int delta = -3; delta <= 3; ++delta)
+        {
+            const int idx = focusIndex + delta;
+            if (! juce::isPositiveAndBelow (idx, owner.presetFiles.size()))
+                continue;
+
+            const float y = midY + ((float) delta * rowH) + animOffset;
+            const float dist = std::abs ((y - midY) / rowH);
+            const float scale = juce::jlimit (0.40f, 1.0f, 1.0f - dist * 0.32f);
+            const float alpha = juce::jlimit (0.18f, 1.0f, 1.0f - dist * 0.40f) * fade;
+            // Centre name is large; neighbours step down
+            const float fontSize = (delta == 0 ? 72.0f : 36.0f) * scale;
+
+            g.setFont (juce::FontOptions (fontSize, juce::Font::bold));
+            g.setColour ((delta == 0 ? th.text : th.textDim).withMultipliedAlpha (alpha));
+            g.drawText (nameAt (idx),
+                        juce::Rectangle<float> (0.0f, y - rowH * 0.5f, W, rowH),
+                        juce::Justification::centred, true);
+        }
+    }
+
+    void timerCallback() override
+    {
+        fade = juce::jmin (1.0f, fade + 0.12f);
+        animOffset += (targetOffset - animOffset) * 0.28f;
+        if (std::abs (animOffset - targetOffset) < 0.4f)
+            animOffset = targetOffset;
+        repaint();
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        dragging = true;
+        dragStartY = e.y;
+        dragStartIndex = focusIndex;
+        targetOffset = animOffset;
+    }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        const float rowH = juce::jlimit (64.0f, 130.0f, (float) getHeight() * 0.16f);
+        animOffset = targetOffset = (float) (e.y - dragStartY);
+        const int steps = (int) std::round (-animOffset / rowH);
+        const int ni = juce::jlimit (0, owner.presetFiles.size() - 1, dragStartIndex + steps);
+        if (ni != focusIndex)
+        {
+            const int diff = ni - focusIndex;
+            focusIndex = ni;
+            animOffset += (float) diff * rowH;
+            targetOffset = animOffset;
+            dragStartY = e.y;
+            dragStartIndex = focusIndex;
+        }
+        repaint();
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        dragging = false;
+        const float rowH = juce::jlimit (64.0f, 130.0f, (float) getHeight() * 0.16f);
+        const float midY = (float) getHeight() * 0.5f;
+
+        if (e.mouseWasClicked() && std::abs (e.getDistanceFromDragStartY()) < 12)
+        {
+            if (std::abs ((float) e.y - midY) < rowH * 0.7f)
+            {
+                commitAndClose();
+                return;
+            }
+            step ((float) e.y < midY ? -1 : 1);
+            return;
+        }
+
+        const int steps = (int) std::round (-animOffset / rowH);
+        focusIndex = juce::jlimit (0, owner.presetFiles.size() - 1, dragStartIndex + steps);
+        animOffset = targetOffset = 0.0f;
+        repaint();
+    }
+
+    void step (int dir)
+    {
+        const int ni = juce::jlimit (0, owner.presetFiles.size() - 1, focusIndex + dir);
+        if (ni == focusIndex) return;
+        const float rowH = juce::jlimit (64.0f, 130.0f, (float) getHeight() * 0.16f);
+        animOffset = (float) dir * rowH;
+        targetOffset = 0.0f;
+        focusIndex = ni;
+    }
+
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w) override
+    {
+        if (w.deltaY > 0.05f) step (-1);
+        else if (w.deltaY < -0.05f) step (1);
+    }
+
+    void commitAndClose()
+    {
+        const int idx = focusIndex;
+        auto& o = owner;
+        o.presetPickerOverlay.reset();
+        if (juce::isPositiveAndBelow (idx, o.presetFiles.size()))
+        {
+            o.currentPresetIndex = idx;
+            o.updatePresetNameDisplay();
+            o.loadPreset (o.presetFiles[idx]);
+        }
+    }
+
+    bool keyPressed (const juce::KeyPress& key) override
+    {
+        if (key == juce::KeyPress::escapeKey)
+        {
+            owner.presetPickerOverlay.reset();
+            return true;
+        }
+        if (key == juce::KeyPress::upKey)   { step (-1); return true; }
+        if (key == juce::KeyPress::downKey) { step (1);  return true; }
+        if (key == juce::KeyPress::returnKey) { commitAndClose(); return true; }
+        return false;
+    }
+};
+
+void MainComponent::showPresetPickerOverlay()
+{
+    if (presetFiles.isEmpty())
+        return;
+
+    if (presetPickerOverlay != nullptr)
+    {
+        presetPickerOverlay.reset();
+        return;
+    }
+
+    auto* picker = new PresetPickerOverlay (*this);
+    picker->setBounds (getLocalBounds());
+    addAndMakeVisible (picker);
+    picker->toFront (true);
+    picker->grabKeyboardFocus();
+    presetPickerOverlay.reset (picker);
+}
+
 void MainComponent::refreshPresetList()
 {
     presetFiles.clear();
-    presetBox.clear (juce::dontSendNotification);
     auto dir = AppSettings::get().getPresetsDir();
     auto files = dir.findChildFiles (juce::File::findFiles, false, "*.xml");
     // Alphabetical (so 01, 02, 03... sort naturally by name)
     files.sort();
     for (auto& f : files)
-    {
         presetFiles.add (f);
-        presetBox.addItem (f.getFileNameWithoutExtension(), presetFiles.size());
+    updatePresetNameDisplay();
+}
+
+void MainComponent::updatePresetNameDisplay()
+{
+    juce::String name = "No Preset";
+    if (juce::isPositiveAndBelow (currentPresetIndex, presetFiles.size()))
+        name = presetFiles[currentPresetIndex].getFileNameWithoutExtension();
+    else if (AppSettings::get().lastPreset.isNotEmpty())
+        name = juce::File (AppSettings::get().lastPreset).getFileNameWithoutExtension();
+
+    presetNameLabel.setText (name, juce::dontSendNotification);
+
+    // Fill the top-bar height with the name (cap only for extreme ultrawide)
+    const int availW = juce::jmax (80, presetNameLabel.getWidth() - 8);
+    const int availH = juce::jmax (40, presetNameLabel.getHeight());
+    float fs = juce::jmin (110.0f, (float) availH * 0.92f);
+    if (availW > 40)
+    {
+        for (; fs > 24.0f; fs -= 1.5f)
+        {
+            juce::Font f (juce::FontOptions (fs, juce::Font::bold));
+            juce::GlyphArrangement ga;
+            ga.addLineOfText (f, name, 0.0f, 0.0f);
+            if (ga.getBoundingBox (0, -1, true).getWidth() <= (float) availW)
+                break;
+        }
     }
+    presetNameLabel.setFont (juce::FontOptions (fs, juce::Font::bold));
 }
 
 void MainComponent::dismissNameOverlay (bool commit, const juce::String& text)
@@ -973,11 +1197,13 @@ void MainComponent::showPresetNameDialog (const juce::String& title,
 
 void MainComponent::newPreset()
 {
-    // Close any open plugin editor before clearing chain
+    // Fully detach any open plugin editor before clearing the chain
     if (editorWindow != nullptr)
+    {
+        editorWindow->clearContentComponent();
         editorWindow = nullptr;
-    else
-        audioEngine.getPluginChain().closeAllEditors();
+    }
+    audioEngine.getPluginChain().closeAllEditors();
     selectedIndex = -1;
     if (parameterPanel)
     {
@@ -1001,7 +1227,7 @@ void MainComponent::newPreset()
     audioEngine.setMuted (false);
     DevLog::log ("newPreset complete");
     currentPresetIndex = -1;
-    presetBox.setSelectedItemIndex (-1, juce::dontSendNotification);
+    updatePresetNameDisplay();
     rebuildBlocks();
     resized();
 }
@@ -1046,8 +1272,7 @@ void MainComponent::savePreset()
             if (presetFiles[i].getFileName() == file.getFileName())
             {
                 currentPresetIndex = i;
-                presetBox.setSelectedItemIndex (i, juce::dontSendNotification);
-                presetBox.setText (file.getFileNameWithoutExtension(), juce::dontSendNotification);
+                updatePresetNameDisplay();
                 break;
             }
         }
@@ -1121,14 +1346,13 @@ void MainComponent::renamePreset()
             if (presetFiles[i] == newFile)
             {
                 currentPresetIndex = i;
-                presetBox.setSelectedItemIndex (i, juce::dontSendNotification);
+                updatePresetNameDisplay();
                 break;
             }
         }
 
         // Force combo text to the new name
-        if (currentPresetIndex >= 0)
-            presetBox.setText (newFile.getFileNameWithoutExtension(), juce::dontSendNotification);
+        updatePresetNameDisplay();
     });
 }
 
@@ -1157,16 +1381,17 @@ void MainComponent::loadPreset (const juce::File& f)
         parameterPanel->setVisible (false);
     }
 
-    // 1) Close our editor window (releases owned AudioProcessorEditor)
+    // Exact github master sequence (Caliel666/quadnoncortex):
+    // 1) clearContentComponent releases the AudioProcessorEditor ownership
+    // 2) unique_ptr destroys the DocumentWindow
+    // 3) closeAllEditors runs on the *next* message-loop turn so any
+    //    deferred editor dtors have finished before we touch the chain
     if (editorWindow != nullptr)
     {
         DevLog::log ("loadPreset: closing editor window");
         editorWindow->clearContentComponent();
         editorWindow = nullptr;
     }
-
-    // 2) Delete any remaining active editors on processors (belt and suspenders)
-    audioEngine.getPluginChain().closeAllEditors();
 
     const bool wasMuted = audioEngine.isMuted();
     audioEngine.setMuted (true);
@@ -1176,39 +1401,44 @@ void MainComponent::loadPreset (const juce::File& f)
     juce::Thread::sleep (50);
 
     const juce::File presetFile = f;
-    // Run the heavy unload/load on the next message-loop turn so editor
-    // destructors have fully finished (NAM is sensitive to this).
-    juce::MessageManager::callAsync ([this, presetFile, wasMuted]
+    auto safeThis = juce::Component::SafePointer<MainComponent> (this);
+    juce::MessageManager::callAsync ([safeThis, presetFile, wasMuted]
     {
+        if (safeThis == nullptr)
+            return;
+
+        // Second pass: any editor not owned by our window
+        safeThis->audioEngine.getPluginChain().closeAllEditors();
+
         try
         {
             if (auto xml = juce::XmlDocument::parse (presetFile))
             {
-                audioEngine.getPluginChain().loadState (*xml);
+                safeThis->audioEngine.getPluginChain().loadState (*xml);
 
-                if (auto* dev = audioEngine.getDeviceManager().getCurrentAudioDevice())
+                if (auto* dev = safeThis->audioEngine.getDeviceManager().getCurrentAudioDevice())
                 {
                     DevLog::log ("loadPreset prepare sr=" + juce::String (dev->getCurrentSampleRate())
                                  + " bs=" + juce::String (dev->getCurrentBufferSizeSamples()));
-                    audioEngine.getPluginChain().prepare (dev->getCurrentSampleRate(),
-                                                          dev->getCurrentBufferSizeSamples());
+                    safeThis->audioEngine.getPluginChain().prepare (dev->getCurrentSampleRate(),
+                                                                    dev->getCurrentBufferSizeSamples());
                 }
                 else
                 {
                     DevLog::log ("loadPreset WARNING: no audio device");
                 }
 
-                audioEngine.getMidiLearnManager().loadFromXml (*xml);
+                safeThis->audioEngine.getMidiLearnManager().loadFromXml (*xml);
 
                 if (xml->hasAttribute ("inputGain"))
                 {
-                    audioEngine.setInputGain ((float) xml->getDoubleAttribute ("inputGain"));
-                    inputFader.setValue (audioEngine.getInputGain(), juce::dontSendNotification);
+                    safeThis->audioEngine.setInputGain ((float) xml->getDoubleAttribute ("inputGain"));
+                    safeThis->inputFader.setValue (safeThis->audioEngine.getInputGain(), juce::dontSendNotification);
                 }
                 if (xml->hasAttribute ("outputGain"))
                 {
-                    audioEngine.setOutputGain ((float) xml->getDoubleAttribute ("outputGain"));
-                    outputFader.setValue (audioEngine.getOutputGain(), juce::dontSendNotification);
+                    safeThis->audioEngine.setOutputGain ((float) xml->getDoubleAttribute ("outputGain"));
+                    safeThis->outputFader.setValue (safeThis->audioEngine.getOutputGain(), juce::dontSendNotification);
                 }
 
                 AppSettings::get().lastPreset = presetFile.getFileName();
@@ -1228,19 +1458,21 @@ void MainComponent::loadPreset (const juce::File& f)
             DevLog::log ("loadPreset UNKNOWN EXCEPTION");
         }
 
-        rebuildBlocks();
-        audioEngine.getPluginChain().setSuspended (false);
-        audioEngine.setMuted (wasMuted);
-        resized();
+        safeThis->rebuildBlocks();
+        safeThis->updatePresetNameDisplay();
+        safeThis->audioEngine.getPluginChain().setSuspended (false);
+        safeThis->audioEngine.setMuted (wasMuted);
+        safeThis->resized();
 
-        DevLog::log ("loadPreset END: " + juce::String (audioEngine.getPluginChain().getNumPlugins())
+        DevLog::log ("loadPreset END: " + juce::String (safeThis->audioEngine.getPluginChain().getNumPlugins())
                      + " plugins active");
 
-        juce::Desktop::getInstance().getAnimator().fadeIn (&blocksViewport, 280);
-        juce::Timer::callAfterDelay (400, [this]
+        juce::Desktop::getInstance().getAnimator().fadeIn (&safeThis->blocksViewport, 280);
+        juce::Timer::callAfterDelay (400, [safeThis]
         {
-            presetAnimating = false;
-            presetLoading = false;
+            if (safeThis == nullptr) return;
+            safeThis->presetAnimating = false;
+            safeThis->presetLoading = false;
             DevLog::log ("loadPreset unlock (loading flag cleared)");
         });
     });
@@ -1253,7 +1485,7 @@ void MainComponent::presetNext()
     if (now - lastPresetSwitchMs < 280) return;
     lastPresetSwitchMs = now;
     currentPresetIndex = (currentPresetIndex + 1) % presetFiles.size();
-    presetBox.setSelectedItemIndex (currentPresetIndex, juce::dontSendNotification);
+    updatePresetNameDisplay();
     loadPreset (presetFiles[currentPresetIndex]);
 }
 
@@ -1264,7 +1496,7 @@ void MainComponent::presetPrev()
     if (now - lastPresetSwitchMs < 280) return;
     lastPresetSwitchMs = now;
     currentPresetIndex = (currentPresetIndex - 1 + presetFiles.size()) % presetFiles.size();
-    presetBox.setSelectedItemIndex (currentPresetIndex, juce::dontSendNotification);
+    updatePresetNameDisplay();
     loadPreset (presetFiles[currentPresetIndex]);
 }
 
@@ -1330,9 +1562,21 @@ void MainComponent::itemDropped (const SourceDetails& d)
 
 void MainComponent::mouseDown (const juce::MouseEvent& e)
 {
-    // Tap the main UI → close plugin editor (helps when native title bar is off-screen)
-    if (editorWindow != nullptr && editorWindow->isVisible())
-        editorWindow = nullptr;
+    // Tap the main UI → fully detach + destroy plugin editor
+    if (editorWindow != nullptr)
+    {
+        DevLog::log ("mouseDown: detaching plugin editor");
+        editorWindow->clearContentComponent(); // detach from processor first
+        editorWindow = nullptr;               // destroy window
+    }
+
+    // Tap big preset name → open spin picker overlay
+    if (e.eventComponent == &presetNameLabel
+        || (e.eventComponent == this && presetNameLabel.getBounds().contains (e.getPosition())))
+    {
+        showPresetPickerOverlay();
+        return;
+    }
 
     // Click empty board / background → deselect (ignore clicks on blocks themselves)
     if (dynamic_cast<PluginBlockComponent*> (e.eventComponent) != nullptr)

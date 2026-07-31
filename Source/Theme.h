@@ -34,8 +34,12 @@ public:
                                bool shouldDrawButtonAsHighlighted,
                                bool shouldDrawButtonAsDown) override
     {
+        // Fully transparent → no chrome (used by preset ^ / v)
+        if (backgroundColour.getAlpha() < 8)
+            return;
+
         auto bounds = button.getLocalBounds().toFloat().reduced (1.5f);
-        const auto radius = juce::jlimit (9.0f, 15.0f, bounds.getHeight() * 0.30f);
+        const auto radius = juce::jlimit (8.0f, 14.0f, juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.22f);
         auto base = backgroundColour;
         if (shouldDrawButtonAsDown)
             base = base.darker (0.10f);
@@ -46,15 +50,14 @@ public:
         g.fillRoundedRectangle (bounds.translated (0.0f, shouldDrawButtonAsDown ? 0.5f : 1.5f), radius);
         g.setColour (base);
         g.fillRoundedRectangle (bounds.translated (0.0f, shouldDrawButtonAsDown ? 1.0f : 0.0f), radius);
-        // Soft inner edge only — no hard white stroke
     }
 
     void drawButtonText (juce::Graphics& g, juce::TextButton& button,
                          bool, bool) override
     {
         g.setColour (button.findColour (juce::TextButton::textColourOffId));
-        g.setFont (juce::Font (juce::FontOptions (juce::jlimit (11.0f, 16.0f, button.getHeight() * 0.38f),
-                                                  juce::Font::bold)));
+        const float fs = juce::jlimit (12.0f, 36.0f, button.getHeight() * 0.55f);
+        g.setFont (juce::Font (juce::FontOptions (fs, juce::Font::bold)));
         g.drawText (button.getButtonText(), button.getLocalBounds(),
                     juce::Justification::centred, false);
     }
@@ -199,14 +202,15 @@ public:
         return juce::Font (juce::FontOptions (15.0f, juce::Font::bold));
     }
 
-    juce::Font getLabelFont (juce::Label&) override
+    juce::Font getLabelFont (juce::Label& label) override
     {
-        return juce::Font (juce::FontOptions (15.0f));
+        // Honour Label::setFont — do not force a fixed size
+        return label.getFont();
     }
 
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override
     {
-        return juce::Font (juce::FontOptions (juce::jlimit (13.0f, 17.0f, buttonHeight * 0.42f),
+        return juce::Font (juce::FontOptions (juce::jlimit (13.0f, 28.0f, buttonHeight * 0.45f),
                                               juce::Font::bold));
     }
 
