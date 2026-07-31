@@ -23,8 +23,8 @@ ParameterPanel::ParamRow::ParamRow (int paramIdx, juce::AudioProcessorParameter*
     if (isToggle)
     {
         toggle.setToggleState (param->getValue() >= 0.5f, juce::dontSendNotification);
-        toggle.setColour (juce::ToggleButton::tickColourId, juce::Colour (0xff4fc3f7));
-        toggle.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+        toggle.setColour (juce::ToggleButton::tickColourId, Theme::get().accent);
+        toggle.setColour (juce::ToggleButton::textColourId, Theme::get().text);
         toggle.onClick = [this]
         {
             if (parameter != nullptr)
@@ -41,17 +41,16 @@ ParameterPanel::ParamRow::ParamRow (int paramIdx, juce::AudioProcessorParameter*
         slider.setValue (param->getValue(), juce::dontSendNotification);
         slider.setSliderStyle (juce::Slider::LinearHorizontal);
         slider.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
-        slider.setColour (juce::Slider::thumbColourId, juce::Colour (0xff4fc3f7));
-        slider.setColour (juce::Slider::trackColourId, juce::Colour (0xff37474f));
-        slider.setColour (juce::Slider::backgroundColourId, juce::Colour (0xff263238));
+        slider.setColour (juce::Slider::thumbColourId, Theme::get().accent);
+        slider.setColour (juce::Slider::trackColourId, Theme::get().accent);
+        slider.setColour (juce::Slider::backgroundColourId, Theme::get().surfaceAlt);
         addAndMakeVisible (slider);
         toggle.setVisible (false);
     }
 
     valueLabel.setText (param->getText (param->getValue(), 32), juce::dontSendNotification);
 
-    learnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff455a64));
-    learnButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    Theme::get().applyButton (learnButton);
     learnButton.onClick = [this]
     {
         if (learnManager.isLearning()) learnManager.cancelLearn();
@@ -61,8 +60,7 @@ ParameterPanel::ParamRow::ParamRow (int paramIdx, juce::AudioProcessorParameter*
     addAndMakeVisible (learnButton);
 
     clearMidiButton.setButtonText ("X");
-    clearMidiButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffc0392b));
-    clearMidiButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    Theme::get().applyButton (clearMidiButton, false, true);
     clearMidiButton.setTooltip ("Clear MIDI assignment");
     clearMidiButton.onClick = [this]
     {
@@ -97,17 +95,17 @@ void ParameterPanel::ParamRow::updateLearnButton()
     if (learningThis)
     {
         learnButton.setButtonText ("...");
-        learnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffe67e22));
+        learnButton.setColour (juce::TextButton::buttonColourId, Theme::get().warning);
     }
     else if (hasMidi)
     {
         learnButton.setButtonText ("MIDI");
-        learnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff27ae60));
+        learnButton.setColour (juce::TextButton::buttonColourId, Theme::get().success);
     }
     else
     {
         learnButton.setButtonText ("LEARN");
-        learnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff455a64));
+        learnButton.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
     }
 
     clearMidiButton.setVisible (true);
@@ -118,16 +116,13 @@ void ParameterPanel::ParamRow::updateLearnButton()
 void ParameterPanel::ParamRow::paint (juce::Graphics& g)
 {
     auto& th = Theme::get();
-    auto r = getLocalBounds().toFloat().reduced (3.0f);
-    g.setColour (th.card);
-    g.fillRoundedRectangle (r, 14.0f);
-    g.setColour (th.border.withAlpha (0.45f));
-    g.drawRoundedRectangle (r, 14.0f, 1.0f);
+    g.setColour (th.text.withAlpha (0.08f));
+    g.fillRect (getLocalBounds().removeFromBottom (1));
 }
 
 void ParameterPanel::ParamRow::resized()
 {
-    auto r = getLocalBounds().reduced (10, 8);
+    auto r = getLocalBounds().reduced (14, 6);
     const int btnY = r.getY() + (r.getHeight() - 36) / 2;
     clearMidiButton.setBounds (r.removeFromRight (44).withHeight (40).withY (btnY));
     r.removeFromRight (6);
@@ -148,10 +143,15 @@ ParameterPanel::ParameterPanel (MidiLearnManager& learnMgr) : midiLearn (learnMg
     titleLabel.setColour (juce::Label::textColourId, Theme::get().text);
     addAndMakeVisible (titleLabel);
 
-    bypassButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff546e7a));
+    Theme::get().applyButton (bypassButton);
     bypassButton.onClick = [this] { if (bypassCallback) bypassCallback(); };
     addAndMakeVisible (bypassButton);
-    bypassLearnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff455a64));
+
+    Theme::get().applyButton (monoButton);
+    monoButton.onClick = [this] { if (monoToggleCallback) monoToggleCallback(); };
+    addAndMakeVisible (monoButton);
+
+    Theme::get().applyButton (bypassLearnButton);
     bypassLearnButton.onClick = [this]
     {
         if (currentPluginIndex < 0) return;
@@ -163,21 +163,21 @@ ParameterPanel::ParameterPanel (MidiLearnManager& learnMgr) : midiLearn (learnMg
         if (learningBypass)
         {
             bypassLearnButton.setButtonText ("...");
-            bypassLearnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffe67e22));
+            bypassLearnButton.setColour (juce::TextButton::buttonColourId, Theme::get().warning);
             bypassClearButton.setEnabled (false);
             bypassClearButton.setAlpha (0.35f);
         }
         else if (midiLearn.findBinding (currentPluginIndex, -2) != nullptr)
         {
             bypassLearnButton.setButtonText ("MIDI");
-            bypassLearnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff27ae60));
+            bypassLearnButton.setColour (juce::TextButton::buttonColourId, Theme::get().success);
             bypassClearButton.setEnabled (true);
             bypassClearButton.setAlpha (1.0f);
         }
         else
         {
             bypassLearnButton.setButtonText ("LEARN");
-            bypassLearnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff455a64));
+            bypassLearnButton.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
             bypassClearButton.setEnabled (false);
             bypassClearButton.setAlpha (0.35f);
         }
@@ -185,8 +185,7 @@ ParameterPanel::ParameterPanel (MidiLearnManager& learnMgr) : midiLearn (learnMg
     addAndMakeVisible (bypassLearnButton);
 
     bypassClearButton.setButtonText ("X");
-    bypassClearButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffc0392b));
-    bypassClearButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    Theme::get().applyButton (bypassClearButton, false, true);
     bypassClearButton.setVisible (true);
     bypassClearButton.setEnabled (false);
     bypassClearButton.setAlpha (0.35f);
@@ -204,11 +203,10 @@ ParameterPanel::ParameterPanel (MidiLearnManager& learnMgr) : midiLearn (learnMg
     };
     addAndMakeVisible (bypassClearButton);
 
-    colourButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff5c6bc0));
+    Theme::get().applyButton (colourButton);
     addAndMakeVisible (colourButton);
 
-    openEditorButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff37474f));
-    openEditorButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    Theme::get().applyButton (openEditorButton);
     openEditorButton.onClick = [this] { if (openEditorCallback) openEditorCallback(); };
     addAndMakeVisible (openEditorButton);
 
@@ -247,12 +245,12 @@ void ParameterPanel::refreshMidiButtons()
     if (learningBypass)
     {
         bypassLearnButton.setButtonText ("...");
-        bypassLearnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffe67e22));
+        bypassLearnButton.setColour (juce::TextButton::buttonColourId, Theme::get().warning);
     }
     else if (has)
     {
         bypassLearnButton.setButtonText ("MIDI");
-        bypassLearnButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff27ae60));
+        bypassLearnButton.setColour (juce::TextButton::buttonColourId, Theme::get().success);
     }
     else
     {
@@ -265,7 +263,9 @@ void ParameterPanel::refreshMidiButtons()
 }
 
 void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginIndex,
-                                bool bypassed, std::function<void()> onBypass,
+                                bool bypassed, bool mono,
+                                std::function<void()> onBypass,
+                                std::function<void()> onMonoToggle,
                                 std::function<void()> onColour,
                                 std::function<void()> onOpenEditor)
 {
@@ -274,6 +274,7 @@ void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginI
     currentPlugin = instance;
     currentPluginIndex = pluginIndex;
     bypassCallback = std::move (onBypass);
+    monoToggleCallback = std::move (onMonoToggle);
     colourCallback = std::move (onColour);
     openEditorCallback = std::move (onOpenEditor);
 
@@ -286,6 +287,7 @@ void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginI
 
     titleLabel.setText (instance->getName(), juce::dontSendNotification);
     updateBypass (bypassed);
+    updateMono (mono);
     colourButton.onClick = [this] { if (colourCallback) colourCallback(); };
     openEditorButton.onClick = [this] { if (openEditorCallback) openEditorCallback(); };
     openEditorButton.setEnabled (instance != nullptr && instance->hasEditor());
@@ -321,6 +323,7 @@ void ParameterPanel::clear()
     currentPlugin = nullptr;
     currentPluginIndex = -1;
     bypassCallback = nullptr;
+    monoToggleCallback = nullptr;
     colourCallback = nullptr;
     openEditorCallback = nullptr;
     titleLabel.setText ({}, juce::dontSendNotification);
@@ -340,7 +343,14 @@ void ParameterPanel::updateBypass (bool bypassed)
 {
     bypassButton.setButtonText (bypassed ? "BYPASSED" : "BYPASS");
     bypassButton.setColour (juce::TextButton::buttonColourId,
-                            bypassed ? juce::Colour (0xffc0392b) : juce::Colour (0xff546e7a));
+                            bypassed ? Theme::get().danger : Theme::get().surfaceAlt);
+}
+
+void ParameterPanel::updateMono (bool mono)
+{
+    monoButton.setButtonText (mono ? "MONO" : "STEREO");
+    monoButton.setColour (juce::TextButton::buttonColourId,
+                           mono ? Theme::get().accent : Theme::get().surfaceAlt);
 }
 
 void ParameterPanel::parameterValueChanged (int parameterIndex, float newValue)
@@ -371,10 +381,9 @@ void ParameterPanel::sliderValueChanged (juce::Slider* s)
 void ParameterPanel::paint (juce::Graphics& g)
 {
     auto& th = Theme::get();
-    g.fillAll (th.background);
-    auto panel = getLocalBounds().toFloat().reduced (8.0f, 6.0f);
-    g.setColour (th.surface);
-    g.fillRoundedRectangle (panel, 16.0f);
+    g.fillAll (juce::Colours::transparentBlack);
+    g.setColour (th.text.withAlpha (0.10f));
+    g.fillRect (0, 0, getWidth(), 1);
 }
 
 void ParameterPanel::resized()
@@ -386,6 +395,8 @@ void ParameterPanel::resized()
     bypassClearButton.setBounds (top.removeFromRight (44));
     top.removeFromRight (4);
     bypassLearnButton.setBounds (top.removeFromRight (88));
+    top.removeFromRight (4);
+    monoButton.setBounds (top.removeFromRight (80));
     top.removeFromRight (4);
     bypassButton.setBounds (top.removeFromRight (100));
     top.removeFromRight (6);

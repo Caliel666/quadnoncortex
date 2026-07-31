@@ -157,11 +157,30 @@ void PluginChain::process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
 
         try
         {
-            const int outCh = s.instance->getTotalNumOutputChannels();
-            s.instance->processBlock (buffer, midi);
+            if (s.mono && buffer.getNumChannels() >= 2)
+            {
+                // Mono mode: sum L+R into ch0, feed identical L+R to plugin,
+                // then take ch0 output and copy to both channels.
+                tempBuffer.setSize (2, buffer.getNumSamples(), false, false, true);
+                for (int i = 0; i < buffer.getNumSamples(); ++i)
+                {
+                    const float sum = (buffer.getSample (0, i) + buffer.getSample (1, i)) * 0.5f;
+                    tempBuffer.setSample (0, i, sum);
+                    tempBuffer.setSample (1, i, sum);
+                }
+                s.instance->processBlock (tempBuffer, midi);
+                // Copy mono output (ch0) to both channels
+                buffer.copyFrom (0, 0, tempBuffer, 0, 0, buffer.getNumSamples());
+                buffer.copyFrom (1, 0, tempBuffer, 0, 0, buffer.getNumSamples());
+            }
+            else
+            {
+                const int outCh = s.instance->getTotalNumOutputChannels();
+                s.instance->processBlock (buffer, midi);
 
-            if (outCh == 1 && buffer.getNumChannels() >= 2)
-                buffer.copyFrom (1, 0, buffer, 0, 0, buffer.getNumSamples());
+                if (outCh == 1 && buffer.getNumChannels() >= 2)
+                    buffer.copyFrom (1, 0, buffer, 0, 0, buffer.getNumSamples());
+            }
         }
         catch (...)
         {
@@ -291,6 +310,7 @@ void PluginChain::saveState (juce::XmlElement& parent) const
         auto* pluginXml = chainXml->createNewChildElement ("Plugin");
         pluginXml->setAttribute ("name", p->getName());
         pluginXml->setAttribute ("bypassed", plugins[i].bypassed ? 1 : 0);
+        pluginXml->setAttribute ("mono", plugins[i].mono ? 1 : 0);
         pluginXml->setAttribute ("colour", (int) plugins[i].colour.getARGB());
         juce::PluginDescription desc;
         p->fillInPluginDescription (desc);
@@ -322,6 +342,97 @@ void PluginChain::loadState (const juce::XmlElement& parent)
     suspended.store (true);
 
     closeAllEditors();
+
+    // Switching presets usually changes only a plug-in's state. Reusing an
+    // identical chain avoids unloading/reloading VST3 instances; some plug-ins
+    // (including NAM Rig) are not reliable when repeatedly destroyed after an
+    // editor has been created.
+    std::vector<juce::XmlElement*> presetPlugins;
+    std::vector<juce::PluginDescription> presetDescriptions;
+    if (auto* chainXml = parent.getChildByName ("PluginChain"))
+    {
+        for (auto* pluginXml : chainXml->getChildIterator())
+        {
+            if (! pluginXml->hasTagName ("Plugin")) continue;
+            if (auto* descXml = pluginXml->getChildByName ("PLUGIN"))
+            {
+                juce::PluginDescription desc;
+                if (desc.loadFromXml (*descXml))
+                {
+                    presetPlugins.push_back (pluginXml);
+                    presetDescriptions.push_back (std::move (desc));
+                }
+            }
+        }
+    }
+
+    bool canReuseExistingChain = presetPlugins.size() == plugins.size();
+    if (canReuseExistingChain)
+    {
+        for (size_t i = 0; i < plugins.size(); ++i)
+        {
+            if (plugins[i].instance == nullptr)
+            {
+                canReuseExistingChain = false;
+                break;
+            }
+
+            juce::PluginDescription current;
+            plugins[i].instance->fillInPluginDescription (current);
+            if (! current.isDuplicateOf (presetDescriptions[i]))
+            {
+                canReuseExistingChain = false;
+                break;
+            }
+        }
+    }
+
+    if (canReuseExistingChain)
+    {
+        DevLog::log ("PluginChain::loadState reusing "
+                     + juce::String ((int) plugins.size()) + " existing plugin(s)");
+
+        for (size_t i = 0; i < plugins.size(); ++i)
+        {
+            auto& slot = plugins[i];
+            auto* pluginXml = presetPlugins[i];
+            slot.bypassed = pluginXml->getBoolAttribute ("bypassed");
+            slot.mono = pluginXml->getBoolAttribute ("mono");
+            if (pluginXml->hasAttribute ("colour"))
+                slot.colour = juce::Colour ((juce::uint32) pluginXml->getIntAttribute ("colour"));
+
+            if (auto* stateXml = pluginXml->getChildByName ("State"))
+            {
+                juce::MemoryBlock state;
+                state.fromBase64Encoding (stateXml->getAllSubText());
+                try
+                {
+                    slot.instance->setStateInformation (state.getData(), (int) state.getSize());
+                    DevLog::log ("  state restored (" + juce::String ((int) state.getSize()) + " bytes)");
+                }
+                catch (...)
+                {
+                    DevLog::log ("  setStateInformation EXCEPTION");
+                }
+            }
+
+            if (prepared)
+            {
+                try
+                {
+                    configureBuses (*slot.instance, currentSampleRate, currentBlockSize, true);
+                    DevLog::log ("  re-prepared after state");
+                }
+                catch (...)
+                {
+                    DevLog::log ("  re-prepare EXCEPTION");
+                }
+            }
+        }
+
+        DevLog::log ("PluginChain::loadState END — reused existing chain");
+        return;
+    }
 
     // Let any in-flight process() exit the critical section
     {
@@ -389,6 +500,7 @@ void PluginChain::loadState (const juce::XmlElement& parent)
                         if (juce::isPositiveAndBelow (idx, (int) plugins.size()))
                         {
                             plugins[(size_t) idx].bypassed = pluginXml->getBoolAttribute ("bypassed");
+                            plugins[(size_t) idx].mono = pluginXml->getBoolAttribute ("mono");
                             // Keep suspended slots silent until fully configured
                             if (pluginXml->hasAttribute ("colour"))
                                 plugins[(size_t) idx].colour =

@@ -26,46 +26,35 @@ void PluginBlockComponent::paint (juce::Graphics& g)
 {
     auto& th = Theme::get();
     auto bounds = getLocalBounds().toFloat().reduced (5.0f);
-    const float radius = 18.0f;
-
-    auto body = bypassed ? blockColour.withMultipliedSaturation (0.35f)
-                                       .withMultipliedBrightness (0.55f)
-                         : blockColour;
-
-    if (deleteHover)
-        body = th.danger;
-    else if (dragOver)
-        body = body.brighter (0.12f);
+    constexpr float radius = 15.0f;
+    const bool hovered = isMouseOverOrDragging();
+    const auto accent = deleteHover ? th.danger : blockColour;
+    auto body = bypassed ? th.surfaceAlt.darker (0.06f) : th.surface;
+    if (dragOver || hovered)
+        body = body.brighter (0.045f);
 
     if (! dragging)
     {
-        g.setColour (juce::Colours::black.withAlpha (th.currentName == "Light" ? 0.08f : 0.28f));
-        g.fillRoundedRectangle (bounds.translated (0, 2.5f), radius);
+        g.setColour (juce::Colours::black.withAlpha (th.currentName == "Light" ? 0.10f : 0.30f));
+        g.fillRoundedRectangle (bounds.translated (0.0f, hovered ? 1.5f : 3.0f), radius);
     }
 
     g.setColour (body);
     g.fillRoundedRectangle (bounds, radius);
 
-    g.setColour (juce::Colours::white.withAlpha (th.currentName == "Light" ? 0.18f : 0.06f));
-    {
-        auto sheen = bounds;
-        g.fillRoundedRectangle (sheen.removeFromTop (sheen.getHeight() * 0.35f), radius);
-    }
-
-    bounds = getLocalBounds().toFloat().reduced (5.0f);
+    g.setColour (accent.withAlpha (bypassed ? 0.35f : 0.95f));
+    g.drawRoundedRectangle (bounds.reduced (1.0f), radius - 1.0f, 2.0f);
 
     if (selected)
     {
-        g.setColour (th.accent.withAlpha (0.95f));
-        g.drawRoundedRectangle (bounds, radius, 2.0f);
+        g.setColour (th.accent.withAlpha (0.18f));
+        g.fillRoundedRectangle (bounds.expanded (2.0f), radius + 2.0f);
+        g.setColour (th.accent);
+        g.drawRoundedRectangle (bounds.expanded (1.0f), radius + 1.0f, 1.5f);
     }
 
-    g.setColour (bypassed ? th.textDim : juce::Colours::white);
-    if (th.currentName == "Light" && ! bypassed)
-        g.setColour (juce::Colour (0xff1a1d24));
-
-    auto textArea = bounds.reduced (10.0f);
-    const int bypassH = juce::jlimit (14, 24, getHeight() / 6);
+    auto textArea = bounds.reduced (12.0f);
+    const int bypassH = juce::jlimit (18, 26, getHeight() / 6);
     textArea.removeFromBottom ((float) bypassH + 8.0f);
 
     float fontSize = juce::jlimit (15.0f, 40.0f, (float) getHeight() * 0.26f);
@@ -82,19 +71,17 @@ void PluginBlockComponent::paint (juce::Graphics& g)
         }
         fontSize -= 1.5f;
     }
+    g.setColour (bypassed ? th.textDim : th.text);
     g.drawFittedText (pluginName, textArea.toNearestInt(), juce::Justification::centred, 3);
 
     bypassBounds = getLocalBounds().removeFromBottom (bypassH + 10)
-                       .withSizeKeepingCentre (juce::jlimit (32, 56, getWidth() / 3), bypassH);
-    g.setColour (bypassed ? juce::Colours::black.withAlpha (0.25f)
-                          : juce::Colours::white.withAlpha (0.9f));
+                       .withSizeKeepingCentre (juce::jlimit (44, 64, getWidth() / 3), bypassH);
+    g.setColour (bypassed ? th.danger.withAlpha (0.82f)
+                          : th.surfaceAlt);
     g.fillRoundedRectangle (bypassBounds.toFloat(), (float) bypassH * 0.5f);
-    if (bypassed)
-    {
-        g.setColour (juce::Colours::white.withAlpha (0.85f));
-        g.setFont (juce::FontOptions ((float) juce::jmax (9, bypassH - 4), juce::Font::bold));
-        g.drawText ("BYP", bypassBounds, juce::Justification::centred);
-    }
+    g.setColour (bypassed ? juce::Colours::white : th.textDim);
+    g.setFont (juce::FontOptions ((float) juce::jmax (9, bypassH - 6), juce::Font::bold));
+    g.drawText (bypassed ? "BYP" : "ON", bypassBounds, juce::Justification::centred);
 }
 
 void PluginBlockComponent::resized() {}
