@@ -189,11 +189,21 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
+    DEV_LOG ("~MainComponent ENTER");
     setLookAndFeel (nullptr);
     stopTimer();
+    if (editorWindow != nullptr)
+    {
+        DEV_LOGF ("~MainComponent: closing editorWindow=%p content=%p",
+                 (void*) editorWindow.get(), (void*) editorWindow->getContentComponent());
+        editorWindow->clearContentComponent();
+    }
     editorWindow = nullptr;
+    DEV_LOG ("~MainComponent: editorWindow nulled");
     scanOverlay = nullptr;
+    DEV_LOG ("~MainComponent: calling audioEngine.shutdown()");
     audioEngine.shutdown();
+    DEV_LOG ("~MainComponent EXIT");
 }
 
 void MainComponent::openSettings()
@@ -301,10 +311,34 @@ void MainComponent::cycleBlockColour (int index)
 
 void MainComponent::showPluginEditor (int index)
 {
+    DEV_LOGF ("showPluginEditor ENTER index=%d", index);
     auto* inst = audioEngine.getPluginChain().getPluginInstance (index);
-    if (inst == nullptr || ! inst->hasEditor()) return;
-    editorWindow = nullptr;
+    if (inst == nullptr || ! inst->hasEditor())
+    {
+        DEV_LOGF ("showPluginEditor ABORT: inst=%p hasEditor=%d", (void*) inst, inst ? inst->hasEditor() : -1);
+        return;
+    }
+    DEV_LOGF ("showPluginEditor: inst=%p name='%s' activeEditor=%p",
+             (void*) inst, inst->getName().toRawUTF8(), (void*) inst->getActiveEditor());
+
+    // Close any existing editor window first
+    if (editorWindow != nullptr)
+    {
+        DEV_LOGF ("showPluginEditor: closing existing editorWindow=%p", (void*) editorWindow.get());
+        auto* prevContent = editorWindow->getContentComponent();
+        DEV_LOGF ("showPluginEditor: clearContentComponent on editorWindow=%p content=%p",
+                 (void*) editorWindow.get(), (void*) prevContent);
+        editorWindow->clearContentComponent();
+        DEV_LOGF ("showPluginEditor: clearContentComponent done, content now=%p, inst activeEditor=%p",
+                 (void*) editorWindow->getContentComponent(), (void*) inst->getActiveEditor());
+        editorWindow = nullptr;
+        DEV_LOG ("showPluginEditor: old editorWindow destroyed");
+    }
+
     auto* ed = inst->createEditorIfNeeded();
+    DEV_LOGF ("showPluginEditor: createEditorIfNeeded returned ed=%p activeEditor now=%p",
+             (void*) ed, (void*) inst->getActiveEditor());
+    DEV_LOGF ("showPluginEditor: ed->getWidth=%d ed->getHeight=%d", ed ? ed->getWidth() : -1, ed ? ed->getHeight() : -1);
     if (ed == nullptr) return;
 
     class EditorWin : public juce::DocumentWindow
@@ -329,11 +363,13 @@ void MainComponent::showPluginEditor (int index)
 
         void closeButtonPressed() override
         {
-            // CRITICAL: detach the AudioProcessorEditor *now* so the processor
-            // no longer holds an active editor. Only the empty DocumentWindow
-            // is destroyed asynchronously (cannot delete `this` on the stack).
-            clearContentComponent();
+            DEV_LOGF ("EditorWin::closeButtonPressed this=%p content=%p",
+                     (void*) this, (void*) getContentComponent());
+            // The owner destroys this window (and its owned editor) on the next
+            // message-loop turn. Destroying it here would delete `this` while
+            // this callback is still on the stack.
             setVisible (false);
+            DEV_LOGF ("EditorWin::closeButtonPressed: setVisible(false) done, calling onClosed");
             if (onClosed)
                 onClosed();
         }
@@ -341,19 +377,31 @@ void MainComponent::showPluginEditor (int index)
 
     auto* win = new EditorWin (inst->getName(), ed);
     auto safeThis = juce::Component::SafePointer<MainComponent> (this);
+    DEV_LOGF ("showPluginEditor: created EditorWin=%p ed=%p", (void*) win, (void*) ed);
     win->onClosed = [safeThis, win]
     {
+        DEV_LOGF ("EditorWin::onClosed FIRE safeThis=%p win=%p", (void*) (MainComponent*) safeThis, (void*) win);
         juce::MessageManager::callAsync ([safeThis, win]
         {
             // A preset load may already have disposed of this window.
+            DEV_LOGF ("EditorWin::onClosed ASYNC FIRE safeThis=%p editorWindow=%p win=%p",
+                     (void*) (MainComponent*) safeThis, (void*) (safeThis ? safeThis->editorWindow.get() : nullptr), (void*) win);
             if (safeThis != nullptr && safeThis->editorWindow.get() == win)
             {
+                DEV_LOGF ("EditorWin::onClosed ASYNC: NULLING editorWindow (was %p)", (void*) win);
                 safeThis->editorWindow = nullptr;
                 DevLog::log ("plugin editor closed and destroyed");
+            }
+            else
+            {
+                DEV_LOGF ("EditorWin::onClosed ASYNC: SKIP safeThis=%p match=%d",
+                         (void*) (MainComponent*) safeThis,
+                         safeThis ? (safeThis->editorWindow.get() == win) : -1);
             }
         });
     };
     editorWindow.reset (win);
+    DEV_LOGF ("showPluginEditor EXIT: editorWindow now %p", (void*) editorWindow.get());
     DevLog::log ("plugin editor opened: " + inst->getName());
 }
 
@@ -454,9 +502,9 @@ void MainComponent::resized()
     presetNameLabel.setBounds (top);
     updatePresetNameDisplay();
 
-    // Trash sits below the top bar
+    // Trash sits at the bottom center, above the tab bar
     if (showTrash)
-        trashZone.setBounds (getWidth() / 2 - 48, topBarH + 12, 96, 56);
+        trashZone.setBounds (getWidth() / 2 - 48, getHeight() - kTabH - 64, 96, 56);
 
     auto tabs = r.removeFromBottom (kTabH);
     tabPedal.setBounds (tabs.removeFromLeft (tabs.getWidth() / 2).reduced (6, 5));
@@ -634,6 +682,8 @@ void MainComponent::resized()
 
 void MainComponent::rebuildBlocks()
 {
+    DEV_LOGF ("rebuildBlocks ENTER: editorWindow=%p numPlugins=%d",
+             (void*) editorWindow.get(), audioEngine.getPluginChain().getNumPlugins());
     blocks.clear();
     auto& chain = audioEngine.getPluginChain();
     for (int i = 0; i < chain.getNumPlugins(); ++i)
@@ -760,22 +810,28 @@ void MainComponent::selectPlugin (int index)
 
 void MainComponent::removePlugin (int index)
 {
+    DEV_LOGF ("removePlugin ENTER index=%d", index);
     static int lastRemoved = -999;
     static juce::uint32 lastTime = 0;
     const auto now = juce::Time::getMillisecondCounter();
     if (index == lastRemoved && (now - lastTime) < 400)
+    {
+        DEV_LOG ("removePlugin: debounced");
         return; // debounce double-delete from drag end + drop
+    }
     lastRemoved = index;
     lastTime = now;
     if (index < 0) return;
 
-    // Fully detach editor before destroying the plugin instance
+    // Close editor if it belongs to this plugin
     if (editorWindow != nullptr)
     {
+        DEV_LOGF ("removePlugin: closing editorWindow=%p content=%p",
+                 (void*) editorWindow.get(), (void*) editorWindow->getContentComponent());
         editorWindow->clearContentComponent();
         editorWindow = nullptr;
+        DEV_LOG ("removePlugin: editorWindow destroyed");
     }
-    audioEngine.getPluginChain().closeAllEditors();
 
     if (selectedIndex == index)
     {
@@ -1197,13 +1253,16 @@ void MainComponent::showPresetNameDialog (const juce::String& title,
 
 void MainComponent::newPreset()
 {
-    // Fully detach any open plugin editor before clearing the chain
+    // Close any open plugin editor before clearing chain
     if (editorWindow != nullptr)
     {
+        DEV_LOGF ("newPreset: closing editorWindow=%p content=%p",
+                 (void*) editorWindow.get(), (void*) editorWindow->getContentComponent());
         editorWindow->clearContentComponent();
         editorWindow = nullptr;
     }
-    audioEngine.getPluginChain().closeAllEditors();
+    else
+        audioEngine.getPluginChain().closeAllEditors();
     selectedIndex = -1;
     if (parameterPanel)
     {
@@ -1358,7 +1417,13 @@ void MainComponent::renamePreset()
 
 void MainComponent::loadPreset (const juce::File& f)
 {
-    if (! f.existsAsFile()) return;
+    DEV_LOGF ("loadPreset ENTER file='%s'", f.getFullPathName().toRawUTF8());
+
+    if (! f.existsAsFile())
+    {
+        DEV_LOG ("loadPreset ABORT: file does not exist");
+        return;
+    }
     if (presetLoading)
     {
         DevLog::log ("loadPreset SKIPPED (already loading): " + f.getFileName());
@@ -1367,6 +1432,22 @@ void MainComponent::loadPreset (const juce::File& f)
     presetLoading = true;
 
     DevLog::log ("loadPreset BEGIN: " + f.getFullPathName());
+    DEV_LOGF ("loadPreset: editorWindow=%p presetLoading=%d presetAnimating=%d",
+             (void*) editorWindow.get(), presetLoading, presetAnimating);
+
+    // Scan all plugin instances for any active editors BEFORE we touch anything
+    {
+        auto& chain = audioEngine.getPluginChain();
+        for (int i = 0; i < chain.getNumPlugins(); ++i)
+        {
+            if (auto* inst = chain.getPluginInstance (i))
+            {
+                DEV_LOGF ("loadPreset: plugin[%d] '%s' inst=%p activeEditor=%p",
+                         i, inst->getName().toRawUTF8(),
+                         (void*) inst, (void*) inst->getActiveEditor());
+            }
+        }
+    }
 
     presetAnimating = true;
     blocksViewport.setAlpha (0.25f);
@@ -1381,64 +1462,129 @@ void MainComponent::loadPreset (const juce::File& f)
         parameterPanel->setVisible (false);
     }
 
-    // Exact github master sequence (Caliel666/quadnoncortex):
-    // 1) clearContentComponent releases the AudioProcessorEditor ownership
-    // 2) unique_ptr destroys the DocumentWindow
-    // 3) closeAllEditors runs on the *next* message-loop turn so any
-    //    deferred editor dtors have finished before we touch the chain
+    // 1) Close our editor window (releases owned AudioProcessorEditor)
     if (editorWindow != nullptr)
     {
+        auto* content = editorWindow->getContentComponent();
+        DEV_LOGF ("loadPreset step1: editorWindow=%p content=%p — calling clearContentComponent",
+                 (void*) editorWindow.get(), (void*) content);
         DevLog::log ("loadPreset: closing editor window");
         editorWindow->clearContentComponent();
+        DEV_LOG ("loadPreset step1: clearContentComponent DONE");
         editorWindow = nullptr;
+        DEV_LOG ("loadPreset step1: editorWindow nulled");
+    }
+    else
+    {
+        DEV_LOG ("loadPreset step1: editorWindow is already null");
+    }
+
+    // Re-scan: are any editors still alive after clearContentComponent?
+    {
+        auto& chain = audioEngine.getPluginChain();
+        for (int i = 0; i < chain.getNumPlugins(); ++i)
+        {
+            if (auto* inst = chain.getPluginInstance (i))
+            {
+                auto* ed = inst->getActiveEditor();
+                if (ed != nullptr)
+                    DEV_LOGF ("loadPreset WARNING: plugin[%d] '%s' still has activeEditor=%p after clearContentComponent!",
+                             i, inst->getName().toRawUTF8(), (void*) ed);
+            }
+        }
+    }
+
+    // 2) Delete any remaining active editors on processors (belt and suspenders)
+    DEV_LOG ("loadPreset step2: calling closeAllEditors()");
+    audioEngine.getPluginChain().closeAllEditors();
+    DEV_LOG ("loadPreset step2: closeAllEditors() returned");
+
+    // Final scan: confirm NO editors remain
+    {
+        auto& chain = audioEngine.getPluginChain();
+        for (int i = 0; i < chain.getNumPlugins(); ++i)
+        {
+            if (auto* inst = chain.getPluginInstance (i))
+            {
+                auto* ed = inst->getActiveEditor();
+                if (ed != nullptr)
+                    DEV_LOGF ("loadPreset CRITICAL: plugin[%d] '%s' STILL has activeEditor=%p after closeAllEditors!",
+                             i, inst->getName().toRawUTF8(), (void*) ed);
+            }
+        }
     }
 
     const bool wasMuted = audioEngine.isMuted();
     audioEngine.setMuted (true);
     audioEngine.getPluginChain().setSuspended (true);
+    DEV_LOGF ("loadPreset: muted=%d suspended=true, sleeping 50ms", wasMuted);
 
     // Let audio thread + editor teardown settle
     juce::Thread::sleep (50);
+    DEV_LOG ("loadPreset: sleep done, posting callAsync");
 
     const juce::File presetFile = f;
-    auto safeThis = juce::Component::SafePointer<MainComponent> (this);
-    juce::MessageManager::callAsync ([safeThis, presetFile, wasMuted]
+    // Run the heavy unload/load on the next message-loop turn so editor
+    // destructors have fully finished (NAM is sensitive to this).
+    juce::MessageManager::callAsync ([this, presetFile, wasMuted]
     {
-        if (safeThis == nullptr)
-            return;
+        DEV_LOGF ("loadPreset ASYNC ENTER: file='%s'", presetFile.getFileName().toRawUTF8());
+        DEV_LOGF ("loadPreset ASYNC: this=%p editorWindow=%p",
+                 (void*) this, (void*) editorWindow.get());
 
-        // Second pass: any editor not owned by our window
-        safeThis->audioEngine.getPluginChain().closeAllEditors();
+        // Re-check: did something re-open an editor between sleep and async fire?
+        if (editorWindow != nullptr)
+        {
+            DEV_LOGF ("loadPreset ASYNC WARNING: editorWindow=%p reappeared before async body!",
+                     (void*) editorWindow.get());
+        }
+        // Re-check: any active editors on plugins?
+        {
+            auto& chain = audioEngine.getPluginChain();
+            for (int i = 0; i < chain.getNumPlugins(); ++i)
+            {
+                if (auto* inst = chain.getPluginInstance (i))
+                {
+                    auto* ed = inst->getActiveEditor();
+                    if (ed != nullptr)
+                        DEV_LOGF ("loadPreset ASYNC CRITICAL: plugin[%d] has activeEditor=%p at async entry!",
+                                 i, (void*) ed);
+                }
+            }
+        }
 
         try
         {
             if (auto xml = juce::XmlDocument::parse (presetFile))
             {
-                safeThis->audioEngine.getPluginChain().loadState (*xml);
+                DEV_LOG ("loadPreset ASYNC: XML parsed OK, calling loadState");
+                audioEngine.getPluginChain().loadState (*xml);
+                DEV_LOG ("loadPreset ASYNC: loadState returned");
 
-                if (auto* dev = safeThis->audioEngine.getDeviceManager().getCurrentAudioDevice())
+                if (auto* dev = audioEngine.getDeviceManager().getCurrentAudioDevice())
                 {
                     DevLog::log ("loadPreset prepare sr=" + juce::String (dev->getCurrentSampleRate())
                                  + " bs=" + juce::String (dev->getCurrentBufferSizeSamples()));
-                    safeThis->audioEngine.getPluginChain().prepare (dev->getCurrentSampleRate(),
-                                                                    dev->getCurrentBufferSizeSamples());
+                    audioEngine.getPluginChain().prepare (dev->getCurrentSampleRate(),
+                                                          dev->getCurrentBufferSizeSamples());
+                    DEV_LOG ("loadPreset ASYNC: prepare done");
                 }
                 else
                 {
                     DevLog::log ("loadPreset WARNING: no audio device");
                 }
 
-                safeThis->audioEngine.getMidiLearnManager().loadFromXml (*xml);
+                audioEngine.getMidiLearnManager().loadFromXml (*xml);
 
                 if (xml->hasAttribute ("inputGain"))
                 {
-                    safeThis->audioEngine.setInputGain ((float) xml->getDoubleAttribute ("inputGain"));
-                    safeThis->inputFader.setValue (safeThis->audioEngine.getInputGain(), juce::dontSendNotification);
+                    audioEngine.setInputGain ((float) xml->getDoubleAttribute ("inputGain"));
+                    inputFader.setValue (audioEngine.getInputGain(), juce::dontSendNotification);
                 }
                 if (xml->hasAttribute ("outputGain"))
                 {
-                    safeThis->audioEngine.setOutputGain ((float) xml->getDoubleAttribute ("outputGain"));
-                    safeThis->outputFader.setValue (safeThis->audioEngine.getOutputGain(), juce::dontSendNotification);
+                    audioEngine.setOutputGain ((float) xml->getDoubleAttribute ("outputGain"));
+                    outputFader.setValue (audioEngine.getOutputGain(), juce::dontSendNotification);
                 }
 
                 AppSettings::get().lastPreset = presetFile.getFileName();
@@ -1458,45 +1604,54 @@ void MainComponent::loadPreset (const juce::File& f)
             DevLog::log ("loadPreset UNKNOWN EXCEPTION");
         }
 
-        safeThis->rebuildBlocks();
-        safeThis->updatePresetNameDisplay();
-        safeThis->audioEngine.getPluginChain().setSuspended (false);
-        safeThis->audioEngine.setMuted (wasMuted);
-        safeThis->resized();
+        DEV_LOG ("loadPreset ASYNC: calling rebuildBlocks");
+        rebuildBlocks();
+        audioEngine.getPluginChain().setSuspended (false);
+        audioEngine.setMuted (wasMuted);
+        resized();
 
-        DevLog::log ("loadPreset END: " + juce::String (safeThis->audioEngine.getPluginChain().getNumPlugins())
+        DevLog::log ("loadPreset END: " + juce::String (audioEngine.getPluginChain().getNumPlugins())
                      + " plugins active");
 
-        juce::Desktop::getInstance().getAnimator().fadeIn (&safeThis->blocksViewport, 280);
-        juce::Timer::callAfterDelay (400, [safeThis]
+        juce::Desktop::getInstance().getAnimator().fadeIn (&blocksViewport, 280);
+        juce::Timer::callAfterDelay (400, [this]
         {
-            if (safeThis == nullptr) return;
-            safeThis->presetAnimating = false;
-            safeThis->presetLoading = false;
+            presetAnimating = false;
+            presetLoading = false;
             DevLog::log ("loadPreset unlock (loading flag cleared)");
+            DEV_LOG ("loadPreset ASYNC: loading flag cleared");
         });
     });
+    DEV_LOG ("loadPreset: callAsync posted, returning");
 }
 
 void MainComponent::presetNext()
 {
+    DEV_LOGF ("presetNext: presetLoading=%d presetFiles.size=%d currentIdx=%d",
+             presetLoading, presetFiles.size(), currentPresetIndex);
     if (presetFiles.isEmpty() || presetLoading) return;
     const auto now = juce::Time::getMillisecondCounter();
     if (now - lastPresetSwitchMs < 280) return;
     lastPresetSwitchMs = now;
     currentPresetIndex = (currentPresetIndex + 1) % presetFiles.size();
     updatePresetNameDisplay();
+    DEV_LOGF ("presetNext: switching to index %d '%s'", currentPresetIndex,
+             presetFiles[currentPresetIndex].getFileName().toRawUTF8());
     loadPreset (presetFiles[currentPresetIndex]);
 }
 
 void MainComponent::presetPrev()
 {
+    DEV_LOGF ("presetPrev: presetLoading=%d presetFiles.size=%d currentIdx=%d",
+             presetLoading, presetFiles.size(), currentPresetIndex);
     if (presetFiles.isEmpty() || presetLoading) return;
     const auto now = juce::Time::getMillisecondCounter();
     if (now - lastPresetSwitchMs < 280) return;
     lastPresetSwitchMs = now;
     currentPresetIndex = (currentPresetIndex - 1 + presetFiles.size()) % presetFiles.size();
     updatePresetNameDisplay();
+    DEV_LOGF ("presetPrev: switching to index %d '%s'", currentPresetIndex,
+             presetFiles[currentPresetIndex].getFileName().toRawUTF8());
     loadPreset (presetFiles[currentPresetIndex]);
 }
 
@@ -1562,12 +1717,14 @@ void MainComponent::itemDropped (const SourceDetails& d)
 
 void MainComponent::mouseDown (const juce::MouseEvent& e)
 {
-    // Tap the main UI → fully detach + destroy plugin editor
-    if (editorWindow != nullptr)
+    // Tap the main UI → close plugin editor (helps when native title bar is off-screen)
+    if (editorWindow != nullptr && editorWindow->isVisible())
     {
-        DevLog::log ("mouseDown: detaching plugin editor");
-        editorWindow->clearContentComponent(); // detach from processor first
-        editorWindow = nullptr;               // destroy window
+        DEV_LOGF ("mouseDown: closing visible editorWindow=%p content=%p",
+                 (void*) editorWindow.get(), (void*) editorWindow->getContentComponent());
+        editorWindow->clearContentComponent();
+        editorWindow = nullptr;
+        DEV_LOG ("mouseDown: editorWindow destroyed");
     }
 
     // Tap big preset name → open spin picker overlay

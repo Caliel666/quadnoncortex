@@ -112,9 +112,21 @@ private:
         juce::Colour colour { 0xff3a7ca5 };
     };
 
+    struct SpareInstance
+    {
+        juce::PluginDescription desc;
+        std::unique_ptr<juce::AudioPluginInstance> instance;
+    };
+
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList          knownPluginList;
     std::vector<Slot>              plugins;
+
+    /** Plugin instances that were swapped out during a preset switch.
+        Kept alive so they can be reused when the same plugin type is
+        needed again.  Avoids destroying plugins (e.g. NAM Rig) whose
+        internal background threads crash after the C++ object is deleted. */
+    std::vector<SpareInstance> spareInstances;
 
     double currentSampleRate = 44100.0;
     int    currentBlockSize  = 512;

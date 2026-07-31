@@ -50,6 +50,13 @@ PluginChain::~PluginChain()
 {
     releaseResources();
     plugins.clear();
+    // Release all spare instances — let the OS reclaim on exit.
+    // We do NOT call delete because plugins like NAM Rig leave
+    // background threads running that crash after the C++ object is gone.
+    for (auto& sp : spareInstances)
+        if (sp.instance != nullptr)
+            sp.instance.release();
+    spareInstances.clear();
 }
 
 juce::File PluginChain::getAppDataDir()
@@ -249,7 +256,9 @@ void PluginChain::removePlugin (int index)
         plugins.erase (plugins.begin() + index);
     }
 
-    // Destroy outside the lock (plugins can take time / crash in their dtors)
+    // Move to spare cache instead of destroying immediately.
+    // Some plugins (NAM Rig) have internal async ops that crash if the
+    // instance is deleted.  The spare cache allows reuse without destruction.
     if (doomed != nullptr)
     {
         try
@@ -258,16 +267,11 @@ void PluginChain::removePlugin (int index)
             doomed->setPlayHead (nullptr);
         }
         catch (...) {}
-
-        try
-        {
-            doomed.reset();
-        }
-        catch (...)
-        {
-            // Swallow destructor crashes from badly behaved plugins
-            doomed.release(); // leak rather than crash – last resort
-        }
+        SpareInstance sp;
+        doomed->fillInPluginDescription (sp.desc);
+        sp.instance = std::move (doomed);
+        spareInstances.push_back (std::move (sp));
+        DevLog::log ("removePlugin: instance cached as spare");
     }
 
     if (onPluginRemoved)
@@ -455,6 +459,10 @@ void PluginChain::loadState (const juce::XmlElement& parent)
                      + juce::String ((int) doomed.size()) + " old plugin(s)");
     }
 
+    // Move doomed instances to the spare cache instead of destroying.
+    // The cache allows reuse when the same plugin type is needed again,
+    // avoiding destruction of plugins (e.g. NAM Rig) whose internal
+    // background threads crash after the C++ object is deleted.
     for (size_t i = 0; i < doomed.size(); ++i)
     {
         auto& s = doomed[i];
@@ -470,16 +478,11 @@ void PluginChain::loadState (const juce::XmlElement& parent)
         {
             DevLog::log ("  releaseResources EXCEPTION on " + name);
         }
-        try
-        {
-            s.instance.reset();
-            DevLog::log ("  destroyed " + name);
-        }
-        catch (...)
-        {
-            DevLog::log ("  destructor EXCEPTION on " + name + " — leaking instance");
-            s.instance.release();
-        }
+        SpareInstance sp;
+        s.instance->fillInPluginDescription (sp.desc);
+        sp.instance = std::move (s.instance);
+        spareInstances.push_back (std::move (sp));
+        DevLog::log ("  spare: " + name + " cached");
     }
     doomed.clear();
 
@@ -493,15 +496,46 @@ void PluginChain::loadState (const juce::XmlElement& parent)
                 juce::PluginDescription desc;
                 if (desc.loadFromXml (*descXml))
                 {
-                    juce::String error;
-                    DevLog::log ("  loading plugin: " + desc.name);
-                    const int idx = addPlugin (desc, error);
-                    if (idx < 0)
+                    // Try to reuse a cached spare instance
+                    int spareIdx = -1;
+                    for (size_t si = 0; si < spareInstances.size(); ++si)
                     {
-                        DevLog::log ("  FAILED to load " + desc.name + ": " + error);
-                        continue;
+                        if (spareInstances[si].instance != nullptr
+                            && desc.isDuplicateOf (spareInstances[si].desc))
+                        {
+                            spareIdx = (int) si;
+                            break;
+                        }
                     }
-                    DevLog::log ("  loaded idx=" + juce::String (idx) + " " + desc.name);
+
+                    int idx = -1;
+                    if (spareIdx >= 0)
+                    {
+                        // Reuse cached instance
+                        auto spare = std::move (spareInstances[(size_t) spareIdx].instance);
+                        spareInstances.erase (spareInstances.begin() + spareIdx);
+                        configureBuses (*spare, currentSampleRate, currentBlockSize, false);
+                        Slot slot;
+                        slot.instance = std::move (spare);
+                        {
+                            const juce::ScopedLock sl (processLock);
+                            idx = (int) plugins.size();
+                            plugins.push_back (std::move (slot));
+                        }
+                        DevLog::log ("  loaded idx=" + juce::String (idx) + " " + desc.name + " (from spare cache)");
+                    }
+                    else
+                    {
+                        juce::String error;
+                        DevLog::log ("  loading plugin: " + desc.name);
+                        idx = addPlugin (desc, error);
+                        if (idx < 0)
+                        {
+                            DevLog::log ("  FAILED to load " + desc.name + ": " + error);
+                            continue;
+                        }
+                        DevLog::log ("  loaded idx=" + juce::String (idx) + " " + desc.name);
+                    }
                     {
                         const juce::ScopedLock sl (processLock);
                         if (juce::isPositiveAndBelow (idx, (int) plugins.size()))

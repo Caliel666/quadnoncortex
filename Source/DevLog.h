@@ -35,6 +35,14 @@ public:
         get().write (juce::String (buf));
     }
 
+    /** Returns a short thread-id string for logging, e.g. "MSG" or "AUD:0x7f.." */
+    static juce::String threadId()
+    {
+        if (juce::MessageManager::existsAndIsCurrentThread())
+            return "MSG";
+        return "THR:" + juce::String::toHexString ((juce::pointer_sized_int) juce::Thread::getCurrentThreadId());
+    }
+
     juce::File getLogFile() const { return logFile; }
 
 private:
@@ -81,9 +89,11 @@ private:
 };
 
 #if defined (QUADNONCORTEX_DEV)
- #define DEV_LOG(msg)       DevLog::log (msg)
- #define DEV_LOGF(...)      DevLog::logf (__VA_ARGS__)
+ #define DEV_LOG(msg)       DevLog::log ("[" + DevLog::threadId() + "] " + (msg))
+ #define DEV_LOGF(...)      DevLog::log ("[" + DevLog::threadId() + "] " + juce::String::formatted (__VA_ARGS__))
+ #define DEV_PTR(p)         juce::String::toHexString ((juce::pointer_sized_int) (p))
 #else
  #define DEV_LOG(msg)       ((void) 0)
  #define DEV_LOGF(...)      ((void) 0)
+ #define DEV_PTR(p)         ((void) 0)
 #endif
