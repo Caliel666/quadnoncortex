@@ -51,6 +51,22 @@ public:
 
     void toggleBypass (int index) { setBypass (index, ! isBypassed (index)); }
 
+    bool isMono (int index) const
+    {
+        if (juce::isPositiveAndBelow (index, plugins.size()))
+            return plugins[(size_t) index].mono;
+        return false;
+    }
+
+    void setMono (int index, bool mono)
+    {
+        const juce::ScopedLock sl (processLock);
+        if (juce::isPositiveAndBelow (index, plugins.size()))
+            plugins[(size_t) index].mono = mono;
+    }
+
+    void toggleMono (int index) { setMono (index, ! isMono (index)); }
+
     juce::Colour getBlockColour (int index) const
     {
         if (juce::isPositiveAndBelow (index, plugins.size()))
@@ -92,6 +108,7 @@ private:
     {
         std::unique_ptr<juce::AudioPluginInstance> instance;
         bool bypassed = false;
+        bool mono = false;   // true = mono output wiring, false = stereo (default)
         juce::Colour colour { 0xff3a7ca5 };
     };
 

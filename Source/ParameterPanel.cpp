@@ -146,6 +146,11 @@ ParameterPanel::ParameterPanel (MidiLearnManager& learnMgr) : midiLearn (learnMg
     Theme::get().applyButton (bypassButton);
     bypassButton.onClick = [this] { if (bypassCallback) bypassCallback(); };
     addAndMakeVisible (bypassButton);
+
+    Theme::get().applyButton (monoButton);
+    monoButton.onClick = [this] { if (monoToggleCallback) monoToggleCallback(); };
+    addAndMakeVisible (monoButton);
+
     Theme::get().applyButton (bypassLearnButton);
     bypassLearnButton.onClick = [this]
     {
@@ -258,7 +263,9 @@ void ParameterPanel::refreshMidiButtons()
 }
 
 void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginIndex,
-                                bool bypassed, std::function<void()> onBypass,
+                                bool bypassed, bool mono,
+                                std::function<void()> onBypass,
+                                std::function<void()> onMonoToggle,
                                 std::function<void()> onColour,
                                 std::function<void()> onOpenEditor)
 {
@@ -267,6 +274,7 @@ void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginI
     currentPlugin = instance;
     currentPluginIndex = pluginIndex;
     bypassCallback = std::move (onBypass);
+    monoToggleCallback = std::move (onMonoToggle);
     colourCallback = std::move (onColour);
     openEditorCallback = std::move (onOpenEditor);
 
@@ -279,6 +287,7 @@ void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginI
 
     titleLabel.setText (instance->getName(), juce::dontSendNotification);
     updateBypass (bypassed);
+    updateMono (mono);
     colourButton.onClick = [this] { if (colourCallback) colourCallback(); };
     openEditorButton.onClick = [this] { if (openEditorCallback) openEditorCallback(); };
     openEditorButton.setEnabled (instance != nullptr && instance->hasEditor());
@@ -314,6 +323,7 @@ void ParameterPanel::clear()
     currentPlugin = nullptr;
     currentPluginIndex = -1;
     bypassCallback = nullptr;
+    monoToggleCallback = nullptr;
     colourCallback = nullptr;
     openEditorCallback = nullptr;
     titleLabel.setText ({}, juce::dontSendNotification);
@@ -334,6 +344,13 @@ void ParameterPanel::updateBypass (bool bypassed)
     bypassButton.setButtonText (bypassed ? "BYPASSED" : "BYPASS");
     bypassButton.setColour (juce::TextButton::buttonColourId,
                             bypassed ? Theme::get().danger : Theme::get().surfaceAlt);
+}
+
+void ParameterPanel::updateMono (bool mono)
+{
+    monoButton.setButtonText (mono ? "MONO" : "STEREO");
+    monoButton.setColour (juce::TextButton::buttonColourId,
+                           mono ? Theme::get().accent : Theme::get().surfaceAlt);
 }
 
 void ParameterPanel::parameterValueChanged (int parameterIndex, float newValue)
@@ -378,6 +395,8 @@ void ParameterPanel::resized()
     bypassClearButton.setBounds (top.removeFromRight (44));
     top.removeFromRight (4);
     bypassLearnButton.setBounds (top.removeFromRight (88));
+    top.removeFromRight (4);
+    monoButton.setBounds (top.removeFromRight (80));
     top.removeFromRight (4);
     bypassButton.setBounds (top.removeFromRight (100));
     top.removeFromRight (6);

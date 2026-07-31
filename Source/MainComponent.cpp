@@ -114,6 +114,11 @@ MainComponent::MainComponent()
     blocksViewport.setScrollBarsShown (false, true);
     addAndMakeVisible (blocksViewport);
 
+    blocksContent.onPaint = [this] (juce::Graphics& g)
+    {
+        paintConnectionLines (g, blocksContent.getLocalBounds());
+    };
+
     parameterPanel = std::make_unique<ParameterPanel> (audioEngine.getMidiLearnManager());
     addAndMakeVisible (parameterPanel.get());
 
@@ -261,6 +266,7 @@ void MainComponent::openSettings()
         if (tuner) { tuner->sendLookAndFeelChange(); tuner->repaint(); }
         if (pluginBrowser) { pluginBrowser->sendLookAndFeelChange(); pluginBrowser->repaint(); }
         for (auto* b : blocks) b->repaint();
+        blocksContent.repaint();
         repaint();
     };
     panel->onCloseRequested = [this] { openSettings(); }; // toggles closed
@@ -459,33 +465,87 @@ void MainComponent::resized()
         right.removeFromLeft (16);
         outputFader.setBounds (right.reduced (4, 6));
 
-        const bool showParams = selectedIndex >= 0;
-        // Low screens: give parameters most of the height; shrink the board
-        const int h = r.getHeight();
-        const int paramH = ! showParams ? 0
-            : (h < 420 ? juce::jmax (220, (h * 58) / 100)
-                       : juce::jmax (180, (h * 42) / 100));
-        if (parameterPanel)
+        const int n = blocks.size();
+        const int gap = 16;
+        const int availW = juce::jmax (80, r.getWidth() - 8);
+        const int rawAvailH = juce::jmax (80, r.getHeight() - 8);
+        // When param panel is showing, cap block area so blocks stay compact
+        // and param panel sits right below them instead of at the bottom.
+        const bool willShowParams = selectedIndex >= 0;
+        const int availH = willShowParams ? juce::jmin (rawAvailH, 200) : rawAvailH;
+
+        // Calculate block size: single row if possible, shrink when many plugins
+        int blockH, blockW;
+        if (n == 0)
         {
-            parameterPanel->setBounds (r.removeFromBottom (paramH));
-            parameterPanel->setVisible (showParams);
+            blockH = 96; blockW = 96;
+        }
+        else
+        {
+            // Start with an ideal size and fit as many as possible per row
+            blockH = juce::jlimit (64, 136, availH / 2);
+            blockW = juce::jlimit (80, 150, (int) (blockH * 1.14f));
+
+            // How many actually fit in the width?
+            int perRow = juce::jmax (1, (availW - 24 + gap) / (blockW + gap));
+            if (perRow > n) perRow = n;
+
+            // Recalculate block size to fill width nicely
+            blockW = (availW - 48 - gap * (perRow - 1)) / perRow;
+            blockW = juce::jlimit (80, 150, blockW);
+            blockH = juce::jlimit (64, 136, (int) (blockW / 1.14f));
+
+            // If blocks would need multiple rows, check if they fit vertically
+            int numRows = (n + perRow - 1) / perRow;
+            int neededH = numRows * blockH + (numRows - 1) * gap + 40;
+            if (neededH > availH && numRows > 1)
+            {
+                // Shrink block height to fit
+                blockH = (availH - 40 - (numRows - 1) * gap) / numRows;
+                blockH = juce::jmax (56, blockH);
+                blockW = juce::jlimit (80, 150, (int) (blockH * 1.14f));
+                // Recalc perRow with new blockW
+                perRow = juce::jmax (1, (availW - 24 + gap) / (blockW + gap));
+                if (perRow > n) perRow = n;
+                blockW = (availW - 48 - gap * (perRow - 1)) / perRow;
+                blockW = juce::jlimit (80, 150, blockW);
+                numRows = (n + perRow - 1) / perRow;
+            }
         }
 
-        blocksViewport.setBounds (r.reduced (4));
-        // No scrollbars needed when we fit everything
-        blocksViewport.setScrollBarsShown (false, false);
+        // Determine which row the selected block is in
+        int perRowFinal = (n > 0) ? juce::jmax (1, (availW - 24 + gap) / (blockW + gap)) : 1;
+        if (perRowFinal > n) perRowFinal = n;
+        int selectedRow = 0;
+        if (selectedIndex >= 0 && selectedIndex < n)
+            selectedRow = selectedIndex / perRowFinal;
 
-        const int n = blocks.size();
-        const int availW = juce::jmax (80, blocksViewport.getWidth());
-        const int availH = juce::jmax (80, blocksViewport.getHeight());
-        const int gap = 16;
-        int blockH = showParams
-            ? juce::jlimit (76, 112, (int) (availH * 0.62f))
-            : juce::jlimit (96, 136, (int) (availH * 0.34f));
-        int blockW = juce::jlimit (104, 150, (int) (blockH * 1.14f));
-        const int maxPerRow = juce::jmax (1, juce::jmin (6, (availW - 32) / (blockW + gap)));
+        // Parameter panel: sits directly below the blocks, not pushed to the bottom.
+        // The blocks viewport takes only the space it needs (up to 1 row),
+        // and the parameter panel fills the rest.
+        const bool showParams = selectedIndex >= 0;
+        int paramH = 0;
+        if (showParams)
+            paramH = blockH + 56; // match one row of blocks height + header bar
 
-        // Pack into rows of at most 5
+        if (showParams)
+        {
+            // Give blocks viewport exactly one row height, rest goes to param panel
+            auto blocksArea = r.removeFromTop (blockH + gap + 40);
+            blocksViewport.setBounds (blocksArea.reduced (4));
+            blocksViewport.setScrollBarsShown (false, false);
+            parameterPanel->setBounds (r.getX(), r.getY(), r.getWidth(), r.getHeight() - 4);
+            parameterPanel->setVisible (true);
+        }
+        else
+        {
+            blocksViewport.setBounds (r.reduced (4));
+            blocksViewport.setScrollBarsShown (false, false);
+            if (parameterPanel)
+                parameterPanel->setVisible (false);
+        }
+
+        // Build rows dynamically
         struct Row { int start = 0, count = 0; };
         juce::Array<Row> rows;
         {
@@ -494,96 +554,50 @@ void MainComponent::resized()
             {
                 Row row;
                 row.start = i;
-                while (i < n && row.count < maxPerRow)
+                // Dynamic: fill as many as fit in width
+                int rowUsed = 0;
+                while (i < n)
                 {
+                    int nextW = (rowUsed == 0) ? blockW : blockW + gap;
+                    if (rowUsed > 0 && rowUsed + blockW + gap > availW - 48)
+                        break;
                     row.count++;
+                    rowUsed += (row.count == 1) ? blockW : blockW + gap;
                     i++;
                 }
+                if (row.count == 0) { row.count = 1; i++; } // safety
                 rows.add (row);
             }
         }
-        const int rowCount = juce::jmax (1, rows.size());
-        const int fittedHeight = (availH - 40 - gap * (rowCount - 1)) / rowCount;
-        blockH = juce::jlimit (64, blockH, fittedHeight);
-        blockW = juce::jlimit (80, blockW,
-                               (availW - 48 - gap * (maxPerRow - 1)) / maxPerRow);
-       #if 0
-        const int numRows = juce::jmax (1, rows.size());
 
-        // Target: use most of the board. Single row → large tiles; more rows → share height.
-        const float fillW = 0.88f; // fraction of width to use
-        const float fillH = 0.82f;
+        // If only one partial row fits, allow vertical scrolling
+        const int rowCount = rows.size();
+        int contentH = juce::jmax (availH, rowCount * (blockH + gap) + 40);
+        blocksContent.setSize (availW, contentH);
 
-        int blockH = (int) ((availH * fillH - gap * (numRows + 1)) / (float) numRows);
-        // When params are open on a short screen, allow smaller blocks
-        if (showParams && getHeight() < 500)
-            blockH = juce::jlimit (56, 120, blockH);
-        else
-            blockH = juce::jlimit (100, 180, blockH);
-
-        blocksContent.setSize (availW, availH);
-        const int gridH = numRows * blockH + (numRows + 1) * gap;
-        const int originY = juce::jmax (gap, (availH - gridH) / 2);
-
-        for (int r = 0; r < rows.size(); ++r)
+        // Center blocks horizontally in each row
+        for (int ri = 0; ri < rows.size(); ++ri)
         {
-            const auto& row = rows.getReference (r);
-            const int rowBudget = (int) (availW * fillW) - gap * (row.count - 1);
-            // Minimum width so short names stay large enough to tap
-            const int minW = showParams && getHeight() < 500
-                ? juce::jlimit (64, 120, blockH)
-                : juce::jlimit (100, 160, blockH - 10);
-
-            juce::Array<int> widths;
-            int used = 0;
+            const auto& row = rows.getReference (ri);
+            const int rowTotalW = row.count * blockW + (row.count - 1) * gap;
+            int x = juce::jmax (12, (availW - rowTotalW) / 2);
+            const int y = 20 + ri * (blockH + gap);
             for (int c = 0; c < row.count; ++c)
             {
-                const float frac = weights[row.start + c] / juce::jmax (0.001f, row.weightSum);
-                int w = juce::jmax (minW, (int) (rowBudget * frac));
-                widths.add (w);
-                used += w;
-            }
-            // If we overflowed minWs, scale down; if under budget, distribute remainder
-            if (used > rowBudget)
-            {
-                const float s = (float) rowBudget / (float) used;
-                used = 0;
-                for (int c = 0; c < widths.size(); ++c)
-                {
-                    widths.set (c, juce::jmax (80, (int) (widths[c] * s)));
-                    used += widths[c];
-                }
-            }
-            else if (used < rowBudget && row.count > 0)
-            {
-                const int extra = (rowBudget - used) / row.count;
-                for (int c = 0; c < widths.size(); ++c)
-                    widths.set (c, widths[c] + extra);
-                used = 0;
-                for (auto w : widths) used += w;
-            }
-
-            int x = juce::jmax (gap, (availW - (used + gap * (row.count - 1))) / 2);
-            const int y = originY + r * (blockH + gap);
-            for (int c = 0; c < row.count; ++c)
-            {
-                blocks[row.start + c]->setBounds (x, y, widths[c], blockH);
-                x += widths[c] + gap;
-            }
-        }
-       #endif
-
-        blocksContent.setSize (availW, availH);
-        for (int r = 0; r < rows.size(); ++r)
-        {
-            const auto& row = rows.getReference (r);
-            int x = 24;
-            const int y = 20 + r * (blockH + gap);
-            for (int c = 0; c < row.count; ++c)
-            {
-                blocks[row.start + c]->setBounds (x, y, blockW, blockH);
+                if (row.start + c < blocks.size())
+                    blocks[row.start + c]->setBounds (x, y, blockW, blockH);
                 x += blockW + gap;
             }
+        }
+
+        // Auto-scroll: move viewport so the selected block's row is at the top
+        if (selectedIndex >= 0 && selectedIndex < n)
+        {
+            const int selRow = selectedIndex / perRowFinal;
+            const int targetY = selRow * (blockH + gap);
+            const int maxScroll = juce::jmax (0, contentH - blocksViewport.getHeight());
+            const int scrollY = juce::jmin (targetY - 10, maxScroll);
+            blocksViewport.setViewPosition (0, juce::jmax (0, scrollY));
         }
     }
     else
@@ -694,12 +708,20 @@ void MainComponent::selectPlugin (int index)
             auto& chain = audioEngine.getPluginChain();
             parameterPanel->setPlugin (chain.getPluginInstance (selectedIndex), selectedIndex,
                                        chain.isBypassed (selectedIndex),
+                                       chain.isMono (selectedIndex),
                                        [this]
                                        {
                                            audioEngine.getPluginChain().toggleBypass (selectedIndex);
                                            rebuildBlocks();
                                            parameterPanel->updateBypass (
                                                audioEngine.getPluginChain().isBypassed (selectedIndex));
+                                       },
+                                       [this]
+                                       {
+                                           audioEngine.getPluginChain().toggleMono (selectedIndex);
+                                           rebuildBlocks();
+                                           parameterPanel->updateMono (
+                                               audioEngine.getPluginChain().isMono (selectedIndex));
                                        },
                                        [this] { showColourPicker (selectedIndex); },
                                        [this] { showPluginEditor (selectedIndex); });
@@ -951,7 +973,11 @@ void MainComponent::showPresetNameDialog (const juce::String& title,
 
 void MainComponent::newPreset()
 {
-    editorWindow = nullptr;
+    // Close any open plugin editor before clearing chain
+    if (editorWindow != nullptr)
+        editorWindow = nullptr;
+    else
+        audioEngine.getPluginChain().closeAllEditors();
     selectedIndex = -1;
     if (parameterPanel)
     {
@@ -1362,6 +1388,73 @@ void MainComponent::showColourPicker (int pluginIndex)
     opts.useNativeTitleBar = false;
     opts.resizable = false;
     opts.launchAsync();
+}
+
+int MainComponent::getBlockRow (int index) const
+{
+    if (index < 0 || index >= blocks.size()) return 0;
+    return blocks[index]->getY(); // row 0 starts at y=20, row 1 at y=20+blockH+gap, etc.
+}
+
+void MainComponent::paintConnectionLines (juce::Graphics& g, const juce::Rectangle<int>&)
+{
+    const int n = blocks.size();
+    if (n <= 1) return;
+
+    auto& th = Theme::get();
+    const auto lineColour = th.text.withAlpha (0.12f);
+    const auto monoLineColour = th.accent.withAlpha (0.18f);
+
+    // Use a thin stroke
+    g.setColour (lineColour);
+
+    for (int i = 0; i < n - 1; ++i)
+    {
+        auto* srcBlock = blocks[i];
+        auto* dstBlock = blocks[i + 1];
+        if (srcBlock == nullptr || dstBlock == nullptr) continue;
+
+        // Skip bypassed plugins — draw a line from last active to next active
+        const bool srcBypassed = audioEngine.getPluginChain().isBypassed (i);
+        const bool dstBypassed = audioEngine.getPluginChain().isBypassed (i + 1);
+
+        // Dim the line if either end is bypassed
+        const float bypassAlpha = (srcBypassed || dstBypassed) ? 0.04f : 1.0f;
+
+        const bool srcMono = audioEngine.getPluginChain().isMono (i);
+        const bool dstMono = audioEngine.getPluginChain().isMono (i + 1);
+
+        // Connection points: right edge of source, left edge of destination
+        const float srcX = (float) (srcBlock->getRight());
+        const float dstX = (float) (dstBlock->getX());
+        const float srcY = (float) (srcBlock->getY() + srcBlock->getHeight() / 2);
+        const float dstY = (float) (dstBlock->getY() + dstBlock->getHeight() / 2);
+
+        // Skip if blocks are in different rows (vertical gap too large)
+        if (std::abs (srcY - dstY) > srcBlock->getHeight() * 1.5f)
+            continue;
+
+        const float stereoSpread = juce::jmin (8.0f, (float) srcBlock->getHeight() * 0.08f);
+
+        // Determine line style based on source/dest mono state
+        // Both stereo: 2 parallel lines
+        // Either mono: 1 line (mono sums to center)
+        const bool isMonoPath = srcMono || dstMono;
+
+        if (isMonoPath)
+        {
+            // Single center line
+            g.setColour (monoLineColour.withMultipliedAlpha (bypassAlpha));
+            g.drawLine (srcX, srcY, dstX, dstY, 1.5f);
+        }
+        else
+        {
+            // Stereo: two parallel lines (L and R)
+            g.setColour (lineColour.withMultipliedAlpha (bypassAlpha));
+            g.drawLine (srcX, srcY - stereoSpread, dstX, dstY - stereoSpread, 1.0f);
+            g.drawLine (srcX, srcY + stereoSpread, dstX, dstY + stereoSpread, 1.0f);
+        }
+    }
 }
 
 void MainComponent::timerCallback()

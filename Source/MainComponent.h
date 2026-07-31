@@ -23,6 +23,12 @@ public:
     void resized() override;
 
 private:
+    struct BlockContentArea : public juce::Component
+    {
+        std::function<void(juce::Graphics&)> onPaint;
+        void paint (juce::Graphics& g) override { if (onPaint) onPaint (g); }
+    };
+
     void timerCallback() override;
     void rebuildBlocks();
     void selectPlugin (int index);
@@ -53,6 +59,8 @@ private:
     void itemDragMove (const SourceDetails&) override;
     void itemDragExit (const SourceDetails&) override;
     void showColourPicker (int pluginIndex);
+    void paintConnectionLines (juce::Graphics& g, const juce::Rectangle<int>& area);
+    int getBlockRow (int index) const;
 
     AudioEngine audioEngine;
 
@@ -75,7 +83,7 @@ private:
     int currentTab = 0;
 
     juce::Viewport blocksViewport;
-    juce::Component blocksContent;
+    BlockContentArea blocksContent;
     juce::OwnedArray<PluginBlockComponent> blocks;
     std::unique_ptr<ParameterPanel> parameterPanel;
     std::unique_ptr<TunerComponent> tuner;

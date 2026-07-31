@@ -157,11 +157,30 @@ void PluginChain::process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
 
         try
         {
-            const int outCh = s.instance->getTotalNumOutputChannels();
-            s.instance->processBlock (buffer, midi);
+            if (s.mono && buffer.getNumChannels() >= 2)
+            {
+                // Mono mode: sum L+R into ch0, feed identical L+R to plugin,
+                // then take ch0 output and copy to both channels.
+                tempBuffer.setSize (2, buffer.getNumSamples(), false, false, true);
+                for (int i = 0; i < buffer.getNumSamples(); ++i)
+                {
+                    const float sum = (buffer.getSample (0, i) + buffer.getSample (1, i)) * 0.5f;
+                    tempBuffer.setSample (0, i, sum);
+                    tempBuffer.setSample (1, i, sum);
+                }
+                s.instance->processBlock (tempBuffer, midi);
+                // Copy mono output (ch0) to both channels
+                buffer.copyFrom (0, 0, tempBuffer, 0, 0, buffer.getNumSamples());
+                buffer.copyFrom (1, 0, tempBuffer, 0, 0, buffer.getNumSamples());
+            }
+            else
+            {
+                const int outCh = s.instance->getTotalNumOutputChannels();
+                s.instance->processBlock (buffer, midi);
 
-            if (outCh == 1 && buffer.getNumChannels() >= 2)
-                buffer.copyFrom (1, 0, buffer, 0, 0, buffer.getNumSamples());
+                if (outCh == 1 && buffer.getNumChannels() >= 2)
+                    buffer.copyFrom (1, 0, buffer, 0, 0, buffer.getNumSamples());
+            }
         }
         catch (...)
         {
@@ -291,6 +310,7 @@ void PluginChain::saveState (juce::XmlElement& parent) const
         auto* pluginXml = chainXml->createNewChildElement ("Plugin");
         pluginXml->setAttribute ("name", p->getName());
         pluginXml->setAttribute ("bypassed", plugins[i].bypassed ? 1 : 0);
+        pluginXml->setAttribute ("mono", plugins[i].mono ? 1 : 0);
         pluginXml->setAttribute ("colour", (int) plugins[i].colour.getARGB());
         juce::PluginDescription desc;
         p->fillInPluginDescription (desc);
@@ -377,6 +397,7 @@ void PluginChain::loadState (const juce::XmlElement& parent)
             auto& slot = plugins[i];
             auto* pluginXml = presetPlugins[i];
             slot.bypassed = pluginXml->getBoolAttribute ("bypassed");
+            slot.mono = pluginXml->getBoolAttribute ("mono");
             if (pluginXml->hasAttribute ("colour"))
                 slot.colour = juce::Colour ((juce::uint32) pluginXml->getIntAttribute ("colour"));
 
@@ -479,6 +500,7 @@ void PluginChain::loadState (const juce::XmlElement& parent)
                         if (juce::isPositiveAndBelow (idx, (int) plugins.size()))
                         {
                             plugins[(size_t) idx].bypassed = pluginXml->getBoolAttribute ("bypassed");
+                            plugins[(size_t) idx].mono = pluginXml->getBoolAttribute ("mono");
                             // Keep suspended slots silent until fully configured
                             if (pluginXml->hasAttribute ("colour"))
                                 plugins[(size_t) idx].colour =

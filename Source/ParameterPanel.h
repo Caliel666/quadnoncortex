@@ -50,12 +50,14 @@ public:
     ~ParameterPanel() override;
 
     void setPlugin (juce::AudioPluginInstance* instance, int pluginIndex,
-                    bool bypassed, std::function<void()> onBypass,
+                    bool bypassed, bool mono, std::function<void()> onBypass,
+                    std::function<void()> onMonoToggle,
                     std::function<void()> onColour = nullptr,
                     std::function<void()> onOpenEditor = nullptr);
     void clear();
     void updateParamValue (int paramIndex, float value);
     void updateBypass (bool bypassed);
+    void updateMono (bool mono);
     void refreshMidiButtons();
 
     void paint (juce::Graphics&) override;
@@ -98,11 +100,13 @@ private:
     juce::OwnedArray<ParamRow> rows;
     juce::Label titleLabel;
     juce::TextButton bypassButton { "BYPASS" };
+    juce::TextButton monoButton { "STEREO" };
     juce::TextButton bypassLearnButton { "LEARN" };
     juce::TextButton bypassClearButton { "x" };
     juce::TextButton colourButton { "COLOR" };
     juce::TextButton openEditorButton { "UI" };
     std::function<void()> bypassCallback;
+    std::function<void()> monoToggleCallback;
     std::function<void()> colourCallback;
     std::function<void()> openEditorCallback;
 
