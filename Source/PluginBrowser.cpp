@@ -5,19 +5,33 @@
 PluginBrowser::PluginRow::PluginRow (const juce::PluginDescription& d, PluginBrowser& owner)
     : desc (d), browser (owner)
 {
+    setRepaintsOnMouseActivity (true);
 }
 
 void PluginBrowser::PluginRow::paint (juce::Graphics& g)
 {
+    auto& th = Theme::get();
     auto bounds = getLocalBounds().toFloat().reduced (4.0f);
-    g.setColour (juce::Colour (0xff2a2a2a));
-    g.fillRoundedRectangle (bounds, 8.0f);
+    const bool hovered = isMouseOverOrDragging();
+    g.setColour (juce::Colours::black.withAlpha (0.18f));
+    g.fillRoundedRectangle (bounds.translated (0.0f, 2.0f), 14.0f);
+    g.setColour (hovered ? th.card.brighter (0.06f) : th.card);
+    g.fillRoundedRectangle (bounds, 14.0f);
+    g.setColour (th.border.withAlpha (0.75f));
+    g.drawRoundedRectangle (bounds.reduced (0.5f), 14.0f, 1.0f);
 
-    g.setColour (juce::Colours::white);
-    g.setFont (juce::FontOptions (20.0f));
-    g.drawText (desc.name, bounds.reduced (16.0f, 0.0f), juce::Justification::centredLeft);
+    auto icon = bounds.removeFromLeft (38.0f).reduced (10.0f);
+    g.setColour (th.accent.withAlpha (0.90f));
+    g.fillEllipse (icon);
+    g.setColour (th.surface);
+    g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+    g.drawText ("V", icon.toNearestInt(), juce::Justification::centred);
 
-    g.setColour (juce::Colours::grey);
+    g.setColour (th.text);
+    g.setFont (juce::FontOptions (18.0f, juce::Font::bold));
+    g.drawText (desc.name, bounds.reduced (12.0f, 0.0f), juce::Justification::centredLeft);
+
+    g.setColour (th.textDim);
     g.setFont (juce::FontOptions (14.0f));
     g.drawText (desc.manufacturerName,
                 bounds.reduced (16.0f, 0.0f),
@@ -34,13 +48,13 @@ void PluginBrowser::PluginRow::mouseUp (const juce::MouseEvent& e)
 PluginBrowser::PluginBrowser (PluginChain& chain)
     : pluginChain (chain)
 {
-    titleLabel.setText ("Add VST3 Plugin", juce::dontSendNotification);
+    titleLabel.setText ("Add plug-in", juce::dontSendNotification);
     titleLabel.setFont (juce::FontOptions (24.0f, juce::Font::bold));
-    titleLabel.setColour (juce::Label::textColourId, juce::Colours::white);
+    titleLabel.setColour (juce::Label::textColourId, Theme::get().text);
     titleLabel.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (titleLabel);
 
-    closeButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff555555));
+    Theme::get().applyButton (closeButton);
     closeButton.onClick = [this]
     {
         setVisible (false);
@@ -58,7 +72,7 @@ PluginBrowser::PluginBrowser (PluginChain& chain)
 void PluginBrowser::show (int replaceIdx)
 {
     replaceIndex = replaceIdx;
-    titleLabel.setText (replaceIdx >= 0 ? "Replace Plugin" : "Add VST3 Plugin",
+    titleLabel.setText (replaceIdx >= 0 ? "Replace plug-in" : "Add plug-in",
                         juce::dontSendNotification);
     rebuildList();
     setVisible (true);
@@ -114,12 +128,20 @@ void PluginBrowser::choosePlugin (const juce::PluginDescription& desc)
 
 void PluginBrowser::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::get().overlay);
+    auto& th = Theme::get();
+    g.fillAll (th.overlay);
+    auto card = getLocalBounds().toFloat().reduced (18.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.32f));
+    g.fillRoundedRectangle (card.translated (0.0f, 5.0f), 24.0f);
+    g.setColour (th.surface);
+    g.fillRoundedRectangle (card, 24.0f);
+    g.setColour (th.border.withAlpha (0.9f));
+    g.drawRoundedRectangle (card.reduced (0.5f), 24.0f, 1.0f);
 }
 
 void PluginBrowser::resized()
 {
-    auto r = getLocalBounds().reduced (16);
+    auto r = getLocalBounds().reduced (32, 28);
 
     auto top = r.removeFromTop (48);
     closeButton.setBounds (top.removeFromRight (100));

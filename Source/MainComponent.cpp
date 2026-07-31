@@ -16,6 +16,7 @@ MainComponent::MainComponent()
         auto& th = Theme::get();
         titleLabel.setColour (juce::Label::textColourId, th.text);
         titleLabel.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+        presetBox.setComponentID ("presetSelector");
         presetBox.setLookAndFeel (&th.softLaf);
         presetBox.setColour (juce::ComboBox::backgroundColourId, th.surfaceAlt);
         presetBox.setColour (juce::ComboBox::textColourId, th.text);
@@ -26,15 +27,12 @@ MainComponent::MainComponent()
             th.applyButton (*b);
         th.applyButton (addButton, true);
         th.applyButton (savePresetBtn, true);
+        th.applyToggleTab (tabPedal, currentTab == 0);
+        th.applyToggleTab (tabTuner, currentTab == 1);
     }
-
-    getLookAndFeel().setColour (juce::ResizableWindow::backgroundColourId, juce::Colour (0xff0d0d0d));
-    getLookAndFeel().setColour (juce::TextButton::buttonColourId, juce::Colour (0xff37474f));
-    getLookAndFeel().setColour (juce::TextButton::textColourOffId, juce::Colours::white);
 
     titleLabel.setText ("quadnoncortex", juce::dontSendNotification);
     titleLabel.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-    titleLabel.setColour (juce::Label::textColourId, juce::Colours::white);
     addAndMakeVisible (titleLabel);
 
     prevPresetBtn.onClick = [this] { presetPrev(); };
@@ -60,7 +58,6 @@ MainComponent::MainComponent()
     };
     addAndMakeVisible (presetBox);
 
-    addButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff27ae60));
     addButton.onClick = [this] { if (pluginBrowser) pluginBrowser->show (-1); };
     addAndMakeVisible (addButton);
     settingsBtn.onClick = [this] { openSettings(); };
@@ -105,6 +102,8 @@ MainComponent::MainComponent()
     tabPedal.setRadioGroupId (1);
     tabTuner.setRadioGroupId (1);
     tabPedal.setToggleState (true, juce::dontSendNotification);
+    Theme::get().applyToggleTab (tabPedal, true);
+    Theme::get().applyToggleTab (tabTuner, false);
     tabPedal.onClick = [this] { setTab (0); };
     tabTuner.onClick = [this] { setTab (1); };
     addAndMakeVisible (tabPedal);
@@ -250,6 +249,8 @@ void MainComponent::openSettings()
             th.applyButton (*b);
         th.applyButton (addButton, true);
         th.applyButton (savePresetBtn, true);
+        th.applyToggleTab (tabPedal, currentTab == 0);
+        th.applyToggleTab (tabTuner, currentTab == 1);
 
         if (parameterPanel)
         {
@@ -288,6 +289,8 @@ void MainComponent::setTab (int tab)
     audioEngine.setMuted (! board);
     tabPedal.setToggleState (board, juce::dontSendNotification);
     tabTuner.setToggleState (! board, juce::dontSendNotification);
+    Theme::get().applyToggleTab (tabPedal, board);
+    Theme::get().applyToggleTab (tabTuner, ! board);
     resized();
 }
 
@@ -370,7 +373,10 @@ void MainComponent::showPluginEditor (int index)
 void MainComponent::paint (juce::Graphics& g)
 {
     auto& th = Theme::get();
-    g.fillAll (th.background);
+    juce::ColourGradient backdrop (th.background.brighter (0.025f), 0.0f, 0.0f,
+                                   th.background, 0.0f, (float) getHeight(), false);
+    g.setGradientFill (backdrop);
+    g.fillAll();
 
     // Side VU meters (only on board tab)
     if (currentTab == 0 && inputFader.isVisible())
@@ -414,20 +420,20 @@ void MainComponent::resized()
     auto r = getLocalBounds();
 
     // ---- Top bar ----
-    auto top = r.removeFromTop (kTopBar).reduced (6, 6);
-    titleLabel.setBounds (top.removeFromLeft (100).reduced (4, 4));
-    settingsBtn.setBounds (top.removeFromRight (56).reduced (3));
-    addButton.setBounds (top.removeFromRight (56).reduced (3));
+    auto top = r.removeFromTop (kTopBar).reduced (12, 7);
+    titleLabel.setBounds (top.removeFromLeft (145).reduced (2, 4));
+    settingsBtn.setBounds (top.removeFromRight (50).reduced (2));
+    addButton.setBounds (top.removeFromRight (50).reduced (2));
+    renamePresetBtn.setBounds (top.removeFromRight (52).reduced (2));
+    savePresetBtn.setBounds (top.removeFromRight (58).reduced (2));
+    newPresetBtn.setBounds (top.removeFromRight (52).reduced (2));
 
-    const int presetBoxW = juce::jlimit (160, 260, top.getWidth() / 3);
-    const int clusterW = 48 + 6 + presetBoxW + 6 + 48 + 6 + 56 + 6 + 64 + 6 + 52;
+    const int presetBoxW = juce::jlimit (180, 360, top.getWidth() / 2);
+    const int clusterW = 40 + 4 + presetBoxW + 4 + 40;
     auto centre = top.withSizeKeepingCentre (juce::jmin (clusterW, top.getWidth()), top.getHeight());
-    prevPresetBtn.setBounds (centre.removeFromLeft (48).reduced (3));
-    presetBox.setBounds (centre.removeFromLeft (presetBoxW).reduced (3));
-    nextPresetBtn.setBounds (centre.removeFromLeft (48).reduced (3));
-    newPresetBtn.setBounds (centre.removeFromLeft (56).reduced (3));
-    savePresetBtn.setBounds (centre.removeFromLeft (64).reduced (3));
-    renamePresetBtn.setBounds (centre.removeFromLeft (52).reduced (3));
+    prevPresetBtn.setBounds (centre.removeFromLeft (40).reduced (2));
+    presetBox.setBounds (centre.removeFromLeft (presetBoxW).reduced (2, 0));
+    nextPresetBtn.setBounds (centre.removeFromLeft (40).reduced (2));
 
     // Trash sits below the top bar so it doesn't cover presets
     if (showTrash)
@@ -470,23 +476,17 @@ void MainComponent::resized()
         blocksViewport.setScrollBarsShown (false, false);
 
         const int n = blocks.size();
-        const int maxPerRow = 5;
         const int availW = juce::jmax (80, blocksViewport.getWidth());
         const int availH = juce::jmax (80, blocksViewport.getHeight());
-        const int gap = 12;
-
-        auto& chain = audioEngine.getPluginChain();
-
-        // Relative weights from name length (min weight so short names stay touchable)
-        juce::Array<float> weights;
-        for (int i = 0; i < n; ++i)
-        {
-            const int len = juce::jmax (4, chain.getPluginName (i).length());
-            weights.add ((float) len);
-        }
+        const int gap = 16;
+        int blockH = showParams
+            ? juce::jlimit (76, 112, (int) (availH * 0.62f))
+            : juce::jlimit (96, 136, (int) (availH * 0.34f));
+        int blockW = juce::jlimit (104, 150, (int) (blockH * 1.14f));
+        const int maxPerRow = juce::jmax (1, juce::jmin (6, (availW - 32) / (blockW + gap)));
 
         // Pack into rows of at most 5
-        struct Row { int start = 0, count = 0; float weightSum = 0.0f; };
+        struct Row { int start = 0, count = 0; };
         juce::Array<Row> rows;
         {
             int i = 0;
@@ -496,13 +496,18 @@ void MainComponent::resized()
                 row.start = i;
                 while (i < n && row.count < maxPerRow)
                 {
-                    row.weightSum += weights[i];
                     row.count++;
                     i++;
                 }
                 rows.add (row);
             }
         }
+        const int rowCount = juce::jmax (1, rows.size());
+        const int fittedHeight = (availH - 40 - gap * (rowCount - 1)) / rowCount;
+        blockH = juce::jlimit (64, blockH, fittedHeight);
+        blockW = juce::jlimit (80, blockW,
+                               (availW - 48 - gap * (maxPerRow - 1)) / maxPerRow);
+       #if 0
         const int numRows = juce::jmax (1, rows.size());
 
         // Target: use most of the board. Single row → large tiles; more rows → share height.
@@ -564,6 +569,20 @@ void MainComponent::resized()
             {
                 blocks[row.start + c]->setBounds (x, y, widths[c], blockH);
                 x += widths[c] + gap;
+            }
+        }
+       #endif
+
+        blocksContent.setSize (availW, availH);
+        for (int r = 0; r < rows.size(); ++r)
+        {
+            const auto& row = rows.getReference (r);
+            int x = 24;
+            const int y = 20 + r * (blockH + gap);
+            for (int c = 0; c < row.count; ++c)
+            {
+                blocks[row.start + c]->setBounds (x, y, blockW, blockH);
+                x += blockW + gap;
             }
         }
     }

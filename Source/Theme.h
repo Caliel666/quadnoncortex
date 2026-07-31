@@ -35,24 +35,25 @@ public:
                                bool shouldDrawButtonAsDown) override
     {
         auto bounds = button.getLocalBounds().toFloat().reduced (1.5f);
+        const auto radius = juce::jlimit (9.0f, 15.0f, bounds.getHeight() * 0.30f);
         auto base = backgroundColour;
         if (shouldDrawButtonAsDown)
-            base = base.darker (0.12f);
+            base = base.darker (0.10f);
         else if (shouldDrawButtonAsHighlighted)
-            base = base.brighter (0.08f);
+            base = base.brighter (0.065f);
 
+        g.setColour (juce::Colours::black.withAlpha (0.16f));
+        g.fillRoundedRectangle (bounds.translated (0.0f, shouldDrawButtonAsDown ? 0.5f : 1.5f), radius);
         g.setColour (base);
-        g.fillRoundedRectangle (bounds, 10.0f);
+        g.fillRoundedRectangle (bounds.translated (0.0f, shouldDrawButtonAsDown ? 1.0f : 0.0f), radius);
         // Soft inner edge only — no hard white stroke
-        g.setColour (juce::Colours::white.withAlpha (0.04f));
-        g.drawRoundedRectangle (bounds.reduced (0.5f), 10.0f, 1.0f);
     }
 
     void drawButtonText (juce::Graphics& g, juce::TextButton& button,
                          bool, bool) override
     {
         g.setColour (button.findColour (juce::TextButton::textColourOffId));
-        g.setFont (juce::Font (juce::FontOptions (juce::jlimit (12.0f, 16.0f, button.getHeight() * 0.42f),
+        g.setFont (juce::Font (juce::FontOptions (juce::jlimit (11.0f, 16.0f, button.getHeight() * 0.38f),
                                                   juce::Font::bold)));
         g.drawText (button.getButtonText(), button.getLocalBounds(),
                     juce::Justification::centred, false);
@@ -62,10 +63,12 @@ public:
                        int, int, int, int, juce::ComboBox& box) override
     {
         auto bounds = juce::Rectangle<float> (0, 0, (float) width, (float) height).reduced (1.0f);
-        g.setColour (box.findColour (juce::ComboBox::backgroundColourId));
-        g.fillRoundedRectangle (bounds, 10.0f);
-        g.setColour (juce::Colours::white.withAlpha (0.05f));
-        g.drawRoundedRectangle (bounds, 10.0f, 1.0f);
+        const bool isPresetSelector = box.getComponentID() == "presetSelector";
+        if (! isPresetSelector)
+        {
+            g.setColour (box.findColour (juce::ComboBox::backgroundColourId));
+            g.fillRoundedRectangle (bounds, 12.0f);
+        }
 
         const float arrowX = (float) width - 18.0f;
         const float arrowY = (float) height * 0.5f;
@@ -73,7 +76,7 @@ public:
         p.addTriangle (arrowX - 4.0f, arrowY - 2.5f,
                        arrowX + 4.0f, arrowY - 2.5f,
                        arrowX, arrowY + 3.5f);
-        g.setColour (box.findColour (juce::ComboBox::textColourId).withAlpha (0.7f));
+        g.setColour (box.findColour (juce::ComboBox::textColourId).withAlpha (isPresetSelector ? 0.50f : 0.7f));
         g.fillPath (p);
     }
 
@@ -189,9 +192,11 @@ public:
 
     int getDefaultScrollbarWidth() override { return 8; }
 
-    juce::Font getComboBoxFont (juce::ComboBox&) override
+    juce::Font getComboBoxFont (juce::ComboBox& box) override
     {
-        return juce::Font (juce::FontOptions (16.0f));
+        if (box.getComponentID() == "presetSelector")
+            return juce::Font (juce::FontOptions (24.0f, juce::Font::bold));
+        return juce::Font (juce::FontOptions (15.0f, juce::Font::bold));
     }
 
     juce::Font getLabelFont (juce::Label&) override
@@ -232,7 +237,7 @@ public:
     juce::Colour surface         { 0xff161a21 };
     juce::Colour surfaceAlt      { 0xff1c222c };
     juce::Colour card            { 0xff1e2430 };
-    juce::Colour border          { 0x00000000 }; // no harsh borders by default
+    juce::Colour border          { 0x00000000 };
     juce::Colour text            { 0xffeceff4 };
     juce::Colour textDim         { 0xff9aa3b5 };
     juce::Colour accent          { 0xff62b0e8 };
