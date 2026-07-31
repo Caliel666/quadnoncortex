@@ -323,6 +323,96 @@ void PluginChain::loadState (const juce::XmlElement& parent)
 
     closeAllEditors();
 
+    // Switching presets usually changes only a plug-in's state. Reusing an
+    // identical chain avoids unloading/reloading VST3 instances; some plug-ins
+    // (including NAM Rig) are not reliable when repeatedly destroyed after an
+    // editor has been created.
+    std::vector<juce::XmlElement*> presetPlugins;
+    std::vector<juce::PluginDescription> presetDescriptions;
+    if (auto* chainXml = parent.getChildByName ("PluginChain"))
+    {
+        for (auto* pluginXml : chainXml->getChildIterator())
+        {
+            if (! pluginXml->hasTagName ("Plugin")) continue;
+            if (auto* descXml = pluginXml->getChildByName ("PLUGIN"))
+            {
+                juce::PluginDescription desc;
+                if (desc.loadFromXml (*descXml))
+                {
+                    presetPlugins.push_back (pluginXml);
+                    presetDescriptions.push_back (std::move (desc));
+                }
+            }
+        }
+    }
+
+    bool canReuseExistingChain = presetPlugins.size() == plugins.size();
+    if (canReuseExistingChain)
+    {
+        for (size_t i = 0; i < plugins.size(); ++i)
+        {
+            if (plugins[i].instance == nullptr)
+            {
+                canReuseExistingChain = false;
+                break;
+            }
+
+            juce::PluginDescription current;
+            plugins[i].instance->fillInPluginDescription (current);
+            if (! current.isDuplicateOf (presetDescriptions[i]))
+            {
+                canReuseExistingChain = false;
+                break;
+            }
+        }
+    }
+
+    if (canReuseExistingChain)
+    {
+        DevLog::log ("PluginChain::loadState reusing "
+                     + juce::String ((int) plugins.size()) + " existing plugin(s)");
+
+        for (size_t i = 0; i < plugins.size(); ++i)
+        {
+            auto& slot = plugins[i];
+            auto* pluginXml = presetPlugins[i];
+            slot.bypassed = pluginXml->getBoolAttribute ("bypassed");
+            if (pluginXml->hasAttribute ("colour"))
+                slot.colour = juce::Colour ((juce::uint32) pluginXml->getIntAttribute ("colour"));
+
+            if (auto* stateXml = pluginXml->getChildByName ("State"))
+            {
+                juce::MemoryBlock state;
+                state.fromBase64Encoding (stateXml->getAllSubText());
+                try
+                {
+                    slot.instance->setStateInformation (state.getData(), (int) state.getSize());
+                    DevLog::log ("  state restored (" + juce::String ((int) state.getSize()) + " bytes)");
+                }
+                catch (...)
+                {
+                    DevLog::log ("  setStateInformation EXCEPTION");
+                }
+            }
+
+            if (prepared)
+            {
+                try
+                {
+                    configureBuses (*slot.instance, currentSampleRate, currentBlockSize, true);
+                    DevLog::log ("  re-prepared after state");
+                }
+                catch (...)
+                {
+                    DevLog::log ("  re-prepare EXCEPTION");
+                }
+            }
+        }
+
+        DevLog::log ("PluginChain::loadState END — reused existing chain");
+        return;
+    }
+
     // Let any in-flight process() exit the critical section
     {
         const juce::ScopedLock sl (processLock);

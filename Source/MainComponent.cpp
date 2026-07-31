@@ -341,8 +341,9 @@ void MainComponent::showPluginEditor (int index)
 
         void closeButtonPressed() override
         {
-            // Fully tear down editor (not just hide) so the processor is free
-            clearContentComponent();
+            // The owner destroys this window (and its owned editor) on the next
+            // message-loop turn. Destroying it here would delete `this` while
+            // this callback is still on the stack.
             setVisible (false);
             if (onClosed)
                 onClosed();
@@ -350,10 +351,18 @@ void MainComponent::showPluginEditor (int index)
     };
 
     auto* win = new EditorWin (inst->getName(), ed);
-    win->onClosed = [this]
+    auto safeThis = juce::Component::SafePointer<MainComponent> (this);
+    win->onClosed = [safeThis, win]
     {
-        editorWindow = nullptr; // destroy window object too
-        DevLog::log ("plugin editor closed and destroyed");
+        juce::MessageManager::callAsync ([safeThis, win]
+        {
+            // A preset load may already have disposed of this window.
+            if (safeThis != nullptr && safeThis->editorWindow.get() == win)
+            {
+                safeThis->editorWindow = nullptr;
+                DevLog::log ("plugin editor closed and destroyed");
+            }
+        });
     };
     editorWindow.reset (win);
 }
