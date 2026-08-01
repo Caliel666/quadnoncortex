@@ -1,6 +1,12 @@
 #include "PluginChain.h"
 #include "DevLog.h"
 #include "NativeNam/NativeNamProcessor.h"
+#include "NativePlugins/ParametricEQ/ParametricEQProcessor.h"
+#include "NativePlugins/Echo/EchoProcessor.h"
+#include "NativePlugins/Reverb/ReverbProcessor.h"
+#include "NativePlugins/Compressor/CompressorProcessor.h"
+#include "NativePlugins/Limiter/LimiterProcessor.h"
+#include "NativePlugins/Denoiser/DenoiserProcessor.h"
 
 static void configureBuses (juce::AudioPluginInstance& inst, double sr, int bs, bool prepared)
 {
@@ -50,24 +56,35 @@ PluginChain::PluginChain()
 
 void PluginChain::ensureNativePlugins()
 {
-    auto desc = NativeNamProcessor::makeDescription();
-    // Remove any stale Native NAM entries (wrong format name from older builds)
+    const juce::PluginDescription natives[] = {
+        NativeNamProcessor::makeDescription(),
+        ParametricEQProcessor::makeDescription(),
+        EchoProcessor::makeDescription(),
+        ReverbProcessor::makeDescription(),
+        CompressorProcessor::makeDescription(),
+        LimiterProcessor::makeDescription(),
+        DenoiserProcessor::makeDescription(),
+    };
+
+    // Drop previous native entries so we always re-register current set
     juce::OwnedArray<juce::PluginDescription> keep;
     for (auto& t : knownPluginList.getTypes())
     {
-        const bool isNam = (t.fileOrIdentifier == desc.fileOrIdentifier
-                            || t.uniqueId == desc.uniqueId
-                            || t.name == NativeNamProcessor::kName);
-        if (! isNam)
+        bool isNative = (t.pluginFormatName == "Native" || t.pluginFormatName == "Internal"
+                         || t.fileOrIdentifier.startsWith ("internal://"));
+        if (! isNative)
             keep.add (new juce::PluginDescription (t));
     }
     knownPluginList.clear();
     for (auto* t : keep)
         knownPluginList.addType (*t);
 
-    knownPluginList.addType (desc);
+    for (auto& d : natives)
+        knownPluginList.addType (d);
+
     saveKnownPluginsToDisk();
-    DevLog::log ("Registered Native NAM in known plugin list");
+    DevLog::log ("Registered " + juce::String ((int) (sizeof (natives) / sizeof (natives[0])))
+                 + " native plugins");
 }
 
 PluginChain::~PluginChain()
@@ -223,14 +240,52 @@ void PluginChain::process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
 }
 
 
-static bool isNativeNamDesc (const juce::PluginDescription& desc)
+static std::unique_ptr<juce::AudioPluginInstance> createNativeInstance (
+    const juce::PluginDescription& desc, double sr, int bs)
 {
-    return desc.fileOrIdentifier == "internal://native-nam"
+    auto prepare = [sr, bs] (auto proc) -> std::unique_ptr<juce::AudioPluginInstance>
+    {
+        if (sr > 0.0 && bs > 0)
+            proc->prepareToPlay (sr, bs);
+        return proc;
+    };
+
+    if (desc.fileOrIdentifier == "internal://native-nam"
         || desc.uniqueId == 0x4E414D32
-        || desc.name == NativeNamProcessor::kName
-        || desc.pluginFormatName == NativeNamProcessor::kFormatName
-        || desc.pluginFormatName == "Internal"
-        || desc.pluginFormatName == "Native";
+        || desc.name == NativeNamProcessor::kName)
+        return prepare (std::make_unique<NativeNamProcessor>());
+
+    if (desc.fileOrIdentifier == ParametricEQProcessor::kId
+        || desc.uniqueId == ParametricEQProcessor::kUid
+        || desc.name == ParametricEQProcessor::kName)
+        return prepare (std::make_unique<ParametricEQProcessor>());
+
+    if (desc.fileOrIdentifier == EchoProcessor::kId
+        || desc.uniqueId == EchoProcessor::kUid
+        || desc.name == EchoProcessor::kName)
+        return prepare (std::make_unique<EchoProcessor>());
+
+    if (desc.fileOrIdentifier == ReverbProcessor::kId
+        || desc.uniqueId == ReverbProcessor::kUid
+        || desc.name == ReverbProcessor::kName)
+        return prepare (std::make_unique<ReverbProcessor>());
+
+    if (desc.fileOrIdentifier == CompressorProcessor::kId
+        || desc.uniqueId == CompressorProcessor::kUid
+        || desc.name == CompressorProcessor::kName)
+        return prepare (std::make_unique<CompressorProcessor>());
+
+    if (desc.fileOrIdentifier == LimiterProcessor::kId
+        || desc.uniqueId == LimiterProcessor::kUid
+        || desc.name == LimiterProcessor::kName)
+        return prepare (std::make_unique<LimiterProcessor>());
+
+    if (desc.fileOrIdentifier == DenoiserProcessor::kId
+        || desc.uniqueId == DenoiserProcessor::kUid
+        || desc.name == DenoiserProcessor::kName)
+        return prepare (std::make_unique<DenoiserProcessor>());
+
+    return nullptr;
 }
 
 static std::unique_ptr<juce::AudioPluginInstance> createInstanceForDesc (
@@ -238,14 +293,15 @@ static std::unique_ptr<juce::AudioPluginInstance> createInstanceForDesc (
     const juce::PluginDescription& desc,
     double sr, int bs, juce::String& error)
 {
-    // Native NAM is built into the app — never require a file / external format match
-    if (isNativeNamDesc (desc))
+    // Built-in Native plugins — never require a file / external format match
+    if (desc.pluginFormatName == "Native" || desc.pluginFormatName == "Internal"
+        || desc.fileOrIdentifier.startsWith ("internal://"))
     {
-        auto proc = std::make_unique<NativeNamProcessor>();
-        if (sr > 0.0 && bs > 0)
-            proc->prepareToPlay (sr, bs);
-        error.clear();
-        return proc;
+        if (auto proc = createNativeInstance (desc, sr, bs))
+        {
+            error.clear();
+            return proc;
+        }
     }
 
     auto inst = formatManager.createPluginInstance (desc, sr, bs, error);

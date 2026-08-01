@@ -27,7 +27,11 @@ void PluginBrowser::PluginRow::paint (juce::Graphics& g)
 
     g.setColour (th.textDim);
     g.setFont (juce::FontOptions (13.0f));
-    g.drawText (desc.manufacturerName, textArea.toNearestInt(),
+    const bool isNative = desc.pluginFormatName == "Native"
+                       || desc.pluginFormatName == "Internal"
+                       || desc.fileOrIdentifier.startsWithIgnoreCase ("internal://");
+    const juce::String right = isNative ? "Native" : desc.manufacturerName;
+    g.drawText (right, textArea.toNearestInt(),
                 juce::Justification::centredRight, true);
 }
 
@@ -73,6 +77,13 @@ PluginBrowser::PluginBrowser (PluginChain& chain)
     };
     addAndMakeVisible (searchBox);
     searchBox.addMouseListener (this, false);
+
+    filterBox.addItem ("All", 1);
+    filterBox.addItem ("Native", 2);
+    filterBox.addItem ("Third-party", 3);
+    filterBox.setSelectedId (1);
+    filterBox.onChange = [this] { applyFilter(); };
+    addAndMakeVisible (filterBox);
 
     viewport.setViewedComponent (&content, false);
     viewport.setScrollBarsShown (true, false);
@@ -127,11 +138,22 @@ void PluginBrowser::applyFilter()
     rows.clear();
     auto types = pluginChain.getKnownPluginList().getTypes();
     const auto q = filterText.toLowerCase();
+    const int mode = filterBox.getSelectedId(); // 1=All 2=Native 3=Third-party
 
     for (const auto& desc : types)
     {
-        if (desc.pluginFormatName != "VST3" && desc.pluginFormatName != "Internal" && desc.pluginFormatName != "Native")
+        const bool isNative = desc.pluginFormatName == "Native"
+                           || desc.pluginFormatName == "Internal"
+                           || desc.fileOrIdentifier.startsWith ("internal://");
+        const bool isVst = desc.pluginFormatName == "VST3";
+
+        if (! isNative && ! isVst)
             continue;
+        if (mode == 2 && ! isNative)
+            continue;
+        if (mode == 3 && ! isVst)
+            continue;
+
         if (q.isNotEmpty())
         {
             if (! desc.name.toLowerCase().contains (q)
@@ -199,7 +221,9 @@ void PluginBrowser::resized()
     titleLabel.setBounds (top);
 
     r.removeFromTop (10);
-    searchBox.setBounds (r.removeFromTop (48).reduced (0, 4));
+    auto searchRow = r.removeFromTop (48);
+    filterBox.setBounds (searchRow.removeFromRight (140).reduced (4, 4));
+    searchBox.setBounds (searchRow.reduced (0, 4));
     r.removeFromTop (8);
 
     viewport.setBounds (r);

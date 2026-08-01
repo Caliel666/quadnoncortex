@@ -30,6 +30,7 @@ private:
     juce::TextButton closeButton { "CLOSE" };
     juce::Label      titleLabel;
     juce::TextEditor searchBox;
+    juce::ComboBox filterBox; // All / Native / Third-party
 
     /** Full-screen glass overlay hosting the OSK (same feel as rename preset). */
     class KeyboardOverlay : public juce::Component, private juce::Timer
