@@ -61,6 +61,11 @@ target_sources(quadnoncortex
         Source/NativeNam/NativeNamProcessor.cpp
         Source/NativeNam/NativeNamPanel.cpp
         Source/NativeNam/Tone3000Client.cpp
+        Source/NativePlugins/ParametricEQ/ParametricEQProcessor.cpp
+        Source/NativePlugins/Echo/EchoProcessor.cpp
+        Source/NativePlugins/Reverb/ReverbProcessor.cpp
+        Source/NativePlugins/Compressor/CompressorProcessor.cpp
+        Source/NativePlugins/Limiter/LimiterProcessor.cpp
 )
 
 target_compile_definitions(quadnoncortex
