@@ -1,5 +1,6 @@
 #include "ParameterPanel.h"
 #include "Theme.h"
+#include "NativeNam/NativeNamProcessor.h"
 
 ParameterPanel::ParamRow::ParamRow (int paramIdx, juce::AudioProcessorParameter* param,
                                     MidiLearnManager& mgr, int pluginIdx)
@@ -286,11 +287,27 @@ void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginI
     }
 
     titleLabel.setText (instance->getName(), juce::dontSendNotification);
+
+    // Always refresh header for THIS plugin index (bypass / mono / MIDI / colour)
+    // so switching to Native NAM never leaves the previous plugin's top-bar state.
     updateBypass (bypassed);
     updateMono (mono);
     colourButton.onClick = [this] { if (colourCallback) colourCallback(); };
     openEditorButton.onClick = [this] { if (openEditorCallback) openEditorCallback(); };
     openEditorButton.setEnabled (instance != nullptr && instance->hasEditor());
+    refreshMidiButtons();
+
+    // Native NAM gets a dedicated amp/pedal/cab + Tone3000 panel
+    if (auto* nam = dynamic_cast<NativeNamProcessor*> (instance))
+    {
+        nativeNamPanel.reset (new NativeNamPanel (*nam, midiLearn, pluginIndex));
+        content.addAndMakeVisible (nativeNamPanel.get());
+        rows.clear(); // no generic param rows
+        setVisible (true);
+        resized();
+        return;
+    }
+
 
     const auto& params = instance->getParameters();
     for (int i = 0; i < params.size(); ++i)
@@ -320,6 +337,7 @@ void ParameterPanel::clear()
                 p->removeListener (this);
     }
     rows.clear();
+    nativeNamPanel.reset();
     currentPlugin = nullptr;
     currentPluginIndex = -1;
     bypassCallback = nullptr;
@@ -327,6 +345,17 @@ void ParameterPanel::clear()
     colourCallback = nullptr;
     openEditorCallback = nullptr;
     titleLabel.setText ({}, juce::dontSendNotification);
+
+    // Reset header so the next plugin never inherits stale MIDI / bypass chrome
+    bypassButton.setButtonText ("BYPASS");
+    bypassButton.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
+    monoButton.setButtonText ("STEREO");
+    monoButton.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
+    bypassLearnButton.setButtonText ("LEARN");
+    bypassLearnButton.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
+    bypassClearButton.setEnabled (false);
+    bypassClearButton.setAlpha (0.35f);
+    openEditorButton.setEnabled (false);
 }
 
 void ParameterPanel::updateParamValue (int paramIndex, float value)
@@ -404,6 +433,13 @@ void ParameterPanel::resized()
     titleLabel.setBounds (top);
 
     viewport.setBounds (r);
+    if (nativeNamPanel != nullptr)
+    {
+        const int preferredH = nativeNamPanel->getPreferredHeight();
+        content.setSize (viewport.getWidth() - 8, juce::jmax (preferredH, viewport.getHeight()));
+        nativeNamPanel->setBounds (0, 0, content.getWidth(), content.getHeight());
+        return;
+    }
     const int contentHeight = rows.size() * kRowHeight;
     content.setSize (viewport.getWidth() - 8, juce::jmax (contentHeight, viewport.getHeight()));
     int y = 0;

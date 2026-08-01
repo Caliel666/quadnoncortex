@@ -1,5 +1,6 @@
 #include "PluginChain.h"
 #include "DevLog.h"
+#include "NativeNam/NativeNamProcessor.h"
 
 static void configureBuses (juce::AudioPluginInstance& inst, double sr, int bs, bool prepared)
 {
@@ -44,6 +45,29 @@ static void configureBuses (juce::AudioPluginInstance& inst, double sr, int bs, 
 PluginChain::PluginChain()
 {
     juce::addDefaultFormatsToManager (formatManager);
+    formatManager.addFormat (new NativeNamFormat());
+}
+
+void PluginChain::ensureNativePlugins()
+{
+    auto desc = NativeNamProcessor::makeDescription();
+    // Remove any stale Native NAM entries (wrong format name from older builds)
+    juce::OwnedArray<juce::PluginDescription> keep;
+    for (auto& t : knownPluginList.getTypes())
+    {
+        const bool isNam = (t.fileOrIdentifier == desc.fileOrIdentifier
+                            || t.uniqueId == desc.uniqueId
+                            || t.name == NativeNamProcessor::kName);
+        if (! isNam)
+            keep.add (new juce::PluginDescription (t));
+    }
+    knownPluginList.clear();
+    for (auto* t : keep)
+        knownPluginList.addType (*t);
+
+    knownPluginList.addType (desc);
+    saveKnownPluginsToDisk();
+    DevLog::log ("Registered Native NAM in known plugin list");
 }
 
 PluginChain::~PluginChain()
@@ -101,9 +125,10 @@ juce::FileSearchPath PluginChain::getDefaultVST3Paths()
 void PluginChain::loadKnownPluginsFromDisk()
 {
     auto file = getKnownPluginsFile();
-    if (! file.existsAsFile()) return;
-    if (auto xml = juce::XmlDocument::parse (file))
-        knownPluginList.recreateFromXml (*xml);
+    if (file.existsAsFile())
+        if (auto xml = juce::XmlDocument::parse (file))
+            knownPluginList.recreateFromXml (*xml);
+    ensureNativePlugins();
 }
 
 void PluginChain::saveKnownPluginsToDisk() const
@@ -197,9 +222,41 @@ void PluginChain::process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
     }
 }
 
+
+static bool isNativeNamDesc (const juce::PluginDescription& desc)
+{
+    return desc.fileOrIdentifier == "internal://native-nam"
+        || desc.uniqueId == 0x4E414D32
+        || desc.name == NativeNamProcessor::kName
+        || desc.pluginFormatName == NativeNamProcessor::kFormatName
+        || desc.pluginFormatName == "Internal"
+        || desc.pluginFormatName == "Native";
+}
+
+static std::unique_ptr<juce::AudioPluginInstance> createInstanceForDesc (
+    juce::AudioPluginFormatManager& formatManager,
+    const juce::PluginDescription& desc,
+    double sr, int bs, juce::String& error)
+{
+    // Native NAM is built into the app — never require a file / external format match
+    if (isNativeNamDesc (desc))
+    {
+        auto proc = std::make_unique<NativeNamProcessor>();
+        if (sr > 0.0 && bs > 0)
+            proc->prepareToPlay (sr, bs);
+        error.clear();
+        return proc;
+    }
+
+    auto inst = formatManager.createPluginInstance (desc, sr, bs, error);
+    if (inst == nullptr && error.isEmpty())
+        error = "No compatible plug-in format exists for this plug-in";
+    return inst;
+}
+
 int PluginChain::addPlugin (const juce::PluginDescription& desc, juce::String& error)
 {
-    auto instance = formatManager.createPluginInstance (desc, currentSampleRate, currentBlockSize, error);
+    auto instance = createInstanceForDesc (formatManager, desc, currentSampleRate, currentBlockSize, error);
     if (instance == nullptr) return -1;
 
     configureBuses (*instance, currentSampleRate, currentBlockSize, prepared);
@@ -294,7 +351,7 @@ void PluginChain::movePlugin (int from, int to)
 bool PluginChain::replacePlugin (int index, const juce::PluginDescription& desc, juce::String& error)
 {
     if (! juce::isPositiveAndBelow (index, plugins.size())) return false;
-    auto instance = formatManager.createPluginInstance (desc, currentSampleRate, currentBlockSize, error);
+    auto instance = createInstanceForDesc (formatManager, desc, currentSampleRate, currentBlockSize, error);
     if (instance == nullptr) return false;
     configureBuses (*instance, currentSampleRate, currentBlockSize, prepared);
     if (plugins[(size_t) index].instance != nullptr)

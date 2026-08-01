@@ -101,17 +101,6 @@ void PluginBlockComponent::mouseDrag (const juce::MouseEvent& e)
         didStartDrag = true;
         setDragging (true);
         if (onDragStarted) onDragStarted (pluginIndex);
-
-        if (auto* c = juce::DragAndDropContainer::findParentDragContainerFor (this))
-        {
-            // Snapshot at 1x so the drag ghost matches on-screen block size
-            const float oldAlpha = getAlpha();
-            setAlpha (1.0f);
-            auto img = createComponentSnapshot (getLocalBounds(), true, 1.0f);
-            setAlpha (oldAlpha);
-            c->startDragging ("PluginBlock:" + juce::String (pluginIndex), this,
-                              juce::ScaledImage (img, 1.0), true);
-        }
     }
 }
 
@@ -145,22 +134,4 @@ void PluginBlockComponent::mouseUp (const juce::MouseEvent& e)
 void PluginBlockComponent::mouseDoubleClick (const juce::MouseEvent&)
 {
     if (onDoubleTap) onDoubleTap (pluginIndex);
-}
-
-bool PluginBlockComponent::isInterestedInDragSource (const SourceDetails& d)
-{
-    return d.description.toString().startsWith ("PluginBlock:");
-}
-
-void PluginBlockComponent::itemDragEnter (const SourceDetails&) { dragOver = true;  repaint(); }
-void PluginBlockComponent::itemDragExit  (const SourceDetails&) { dragOver = false; repaint(); }
-
-void PluginBlockComponent::itemDropped (const SourceDetails& d)
-{
-    dragOver = false; repaint();
-    const auto s = d.description.toString();
-    if (! s.startsWith ("PluginBlock:")) return;
-    const int from = s.fromFirstOccurrenceOf (":", false, false).getIntValue();
-    if (from != pluginIndex && onReorder)
-        onReorder (from, pluginIndex);
 }

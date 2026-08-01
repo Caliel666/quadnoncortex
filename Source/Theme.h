@@ -268,9 +268,25 @@ public:
 
     void ensureDefaults()
     {
-        // Always refresh shipped defaults so light/dark stay correct after updates
-        writeDefault ("Dark", true);
-        writeDefault ("Light", false);
+        // Always refresh shipped defaults so palette updates apply after rebuilds
+        themesDir().createDirectory();
+        writePalette ("Dark",          0xff0e1014, 0xff161a21, 0xff1c222c, 0xff1e2430, 0xffeceff4, 0xff9aa3b5, 0xff62b0e8, 0xff1a2f40, 0xffe57373, 0xff81c784, 0xffffb74d, 0xe6080a0e, 0xff2a3140, 0xff3d4a5c, 0xff12151a, 0xff1a1f28, 0xff243040);
+        writePalette ("Light",         0xfff3f4f6, 0xfffafbfc, 0xffe8eaee, 0xffffffff, 0xff1f2329, 0xff6b7280, 0xff3584e4, 0xffdceaf8, 0xffe05c5c, 0xff3a9e5c, 0xffd4920a, 0xcc1a1d22, 0xffe4e6ea, 0xffd0d3d9, 0xfff7f8fa, 0xffe8eaee, 0xffd6e4f5);
+        writePalette ("OLED",          0xff000000, 0xff050505, 0xff0a0a0a, 0xff0f0f0f, 0xffe8e8e8, 0xff888888, 0xff4fc3f7, 0xff0a2030, 0xffff5252, 0xff69f0ae, 0xffffd740, 0xf0000000, 0xff1a1a1a, 0xff2a2a2a, 0xff000000, 0xff111111, 0xff1a2830);
+        writePalette ("Dracula",       0xff282a36, 0xff21222c, 0xff343746, 0xff44475a, 0xfff8f8f2, 0xff6272a4, 0xffbd93f9, 0xff3a2f55, 0xffff5555, 0xff50fa7b, 0xffffb86c, 0xe6151620, 0xff44475a, 0xff6272a4, 0xff21222c, 0xff343746, 0xff44475a);
+        writePalette ("Catppuccin",    0xff1e1e2e, 0xff181825, 0xff313244, 0xff45475a, 0xffcdd6f4, 0xffa6adc8, 0xffcba6f7, 0xff2a2040, 0xfff38ba8, 0xffa6e3a1, 0xfff9e2af, 0xe611111b, 0xff313244, 0xff45475a, 0xff181825, 0xff313244, 0xff45475a);
+        writePalette ("Nord",          0xff2e3440, 0xff3b4252, 0xff434c5e, 0xff4c566a, 0xffeceff4, 0xffd8dee9, 0xff88c0d0, 0xff2a3a48, 0xffbf616a, 0xffa3be8c, 0xffebcb8b, 0xe62e3440, 0xff434c5e, 0xff4c566a, 0xff2e3440, 0xff3b4252, 0xff434c5e);
+        writePalette ("Gruvbox",       0xff282828, 0xff1d2021, 0xff3c3836, 0xff504945, 0xffebdbb2, 0xffa89984, 0xfffe8019, 0xff3a2a18, 0xfffb4934, 0xffb8bb26, 0xfffabd2f, 0xe61d2021, 0xff3c3836, 0xff504945, 0xff1d2021, 0xff3c3836, 0xff504945);
+        writePalette ("Tokyo Night",   0xff1a1b26, 0xff16161e, 0xff24283b, 0xff292e42, 0xffc0caf5, 0xff565f89, 0xff7aa2f7, 0xff1a2740, 0xfff7768e, 0xff9ece6a, 0xffe0af68, 0xe6111140, 0xff24283b, 0xff292e42, 0xff16161e, 0xff24283b, 0xff292e42);
+        writePalette ("One Dark",      0xff282c34, 0xff21252b, 0xff2c313a, 0xff3e4451, 0xffabb2bf, 0xff5c6370, 0xff61afef, 0xff1e3a55, 0xffe06c75, 0xff98c379, 0xffe5c07b, 0xe61c1f26, 0xff2c313a, 0xff3e4451, 0xff21252b, 0xff2c313a, 0xff3e4451);
+        writePalette ("Solarized Dark",0xff002b36, 0xff073642, 0xff094553, 0xff586e75, 0xfffdf6e3, 0xff93a1a1, 0xff268bd2, 0xff0a3a4a, 0xffdc322f, 0xff859900, 0xffb58900, 0xe6001f27, 0xff073642, 0xff094553, 0xff002b36, 0xff073642, 0xff094553);
+        writePalette ("Adwaita Dark",  0xff1e1e1e, 0xff242424, 0xff303030, 0xff3a3a3a, 0xffffffff, 0xffc0c0c0, 0xff3584e4, 0xff1a3050, 0xffe01b24, 0xff2ec27e, 0xffe5a50a, 0xe6101010, 0xff303030, 0xff404040, 0xff1e1e1e, 0xff2a2a2a, 0xff3584e4);
+        writePalette ("Adwaita Light", 0xfffafafa, 0xffffffff, 0xffebebeb, 0xffffffff, 0xff2e3436, 0xff5e5c64, 0xff3584e4, 0xffdceaf8, 0xffe01b24, 0xff2ec27e, 0xffe5a50a, 0xcc1a1d22, 0xffe4e4e4, 0xffd0d0d0, 0xffffffff, 0xffebebeb, 0xffd6e4f5);
+        writePalette ("Breeze Dark",   0xff1b1e20, 0xff232629, 0xff2a2e32, 0xff31363b, 0xffeff0f1, 0xff7f8c8d, 0xff3daee9, 0xff1a3548, 0xffda4453, 0xff27ae60, 0xfff67400, 0xe6121416, 0xff2a2e32, 0xff3b4045, 0xff1b1e20, 0xff2a2e32, 0xff3daee9);
+        writePalette ("Breeze Light",  0xffeff0f1, 0xfffcfcfc, 0xffe8e8e8, 0xffffffff, 0xff232629, 0xff7f8c8d, 0xff3daee9, 0xffd6eef9, 0xffda4453, 0xff27ae60, 0xfff67400, 0xcc1a1d22, 0xffe4e4e4, 0xffd0d0d0, 0xfffcfcfc, 0xffe8e8e8, 0xffd6eef9);
+        writePalette ("Monokai",       0xff272822, 0xff1e1f1c, 0xff3e3d32, 0xff49483e, 0xfff8f8f2, 0xff75715e, 0xff66d9ef, 0xff1a3a42, 0xfff92672, 0xffa6e22e, 0xffe6db74, 0xe6151612, 0xff3e3d32, 0xff49483e, 0xff1e1f1c, 0xff3e3d32, 0xff49483e);
+        writePalette ("Everforest",    0xff2d353b, 0xff232a2e, 0xff3d484d, 0xff475258, 0xffd3c6aa, 0xff859289, 0xff7fbbb3, 0xff1e3538, 0xffe67e80, 0xffa7c080, 0xffdbbc7f, 0xe61a2024, 0xff3d484d, 0xff475258, 0xff232a2e, 0xff3d484d, 0xff475258);
+        writePalette ("Rose Pine",     0xff191724, 0xff1f1d2e, 0xff26233a, 0xff403d52, 0xffe0def4, 0xff908caa, 0xffc4a7e7, 0xff2a2040, 0xffeb6f92, 0xff9ccfd8, 0xfff6c177, 0xe612101b, 0xff26233a, 0xff403d52, 0xff1f1d2e, 0xff26233a, 0xff403d52);
     }
 
     juce::StringArray listThemes()
@@ -381,7 +397,13 @@ private:
             load ("Dark");
     }
 
-    void writeDefault (const juce::String& name, bool dark)
+    void writePalette (const juce::String& name,
+                       juce::uint32 background, juce::uint32 surface, juce::uint32 surfaceAlt,
+                       juce::uint32 card, juce::uint32 text, juce::uint32 textDim,
+                       juce::uint32 accent, juce::uint32 accentSoft,
+                       juce::uint32 danger, juce::uint32 success, juce::uint32 warning,
+                       juce::uint32 overlay, juce::uint32 keyFace, juce::uint32 keyFacePressed,
+                       juce::uint32 topBar, juce::uint32 tabIdleVal, juce::uint32 tabActiveVal)
     {
         auto f = themesDir().getChildFile (name + ".xml");
         juce::XmlElement root ("Theme");
@@ -391,50 +413,24 @@ private:
             auto* e = root.createNewChildElement (tag);
             e->setAttribute ("argb", juce::String::toHexString ((int) argb).paddedLeft ('0', 8));
         };
-
-        if (dark)
-        {
-            put ("background", 0xff0e1014);
-            put ("surface",    0xff161a21);
-            put ("surfaceAlt", 0xff1c222c);
-            put ("card",       0xff1e2430);
-            put ("border",     0x00000000);
-            put ("text",       0xffeceff4);
-            put ("textDim",    0xff9aa3b5);
-            put ("accent",     0xff62b0e8);
-            put ("accentSoft", 0xff1a2f40);
-            put ("danger",     0xffe57373);
-            put ("success",    0xff81c784);
-            put ("warning",    0xffffb74d);
-            put ("overlay",    0xe6080a0e);
-            put ("keyFace",    0xff2a3140);
-            put ("keyFacePressed", 0xff3d4a5c);
-            put ("topBar",     0xff12151a);
-            put ("tabIdle",    0xff1a1f28);
-            put ("tabActive",  0xff243040);
-        }
-        else
-        {
-            // Soft light-gray (libadwaita-ish), not pure white
-            put ("background", 0xfff3f4f6);
-            put ("surface",    0xfffafbfc);
-            put ("surfaceAlt", 0xffe8eaee);
-            put ("card",       0xffffffff);
-            put ("border",     0x00000000);
-            put ("text",       0xff1f2329);
-            put ("textDim",    0xff6b7280);
-            put ("accent",     0xff3584e4);
-            put ("accentSoft", 0xffdceaf8);
-            put ("danger",     0xffe05c5c);
-            put ("success",    0xff3a9e5c);
-            put ("warning",    0xffd4920a);
-            put ("overlay",    0xcc1a1d22);
-            put ("keyFace",    0xffe4e6ea);
-            put ("keyFacePressed", 0xffd0d3d9);
-            put ("topBar",     0xfff7f8fa);
-            put ("tabIdle",    0xffe8eaee);
-            put ("tabActive",  0xffd6e4f5);
-        }
+        put ("background", background);
+        put ("surface", surface);
+        put ("surfaceAlt", surfaceAlt);
+        put ("card", card);
+        put ("border", 0x00000000);
+        put ("text", text);
+        put ("textDim", textDim);
+        put ("accent", accent);
+        put ("accentSoft", accentSoft);
+        put ("danger", danger);
+        put ("success", success);
+        put ("warning", warning);
+        put ("overlay", overlay);
+        put ("keyFace", keyFace);
+        put ("keyFacePressed", keyFacePressed);
+        put ("topBar", topBar);
+        put ("tabIdle", tabIdleVal);
+        put ("tabActive", tabActiveVal);
         root.writeTo (f);
     }
 };

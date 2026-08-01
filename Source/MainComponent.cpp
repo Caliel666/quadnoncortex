@@ -1,6 +1,7 @@
 #include "MainComponent.h"
 #include "DevLog.h"
 #include "Theme.h"
+#include "NativeNam/Tone3000Client.h"
 
 static const juce::uint32 kPalette[] = {
     0xffe67e22, 0xffe74c3c, 0xff9b59b6, 0xff3498db,
@@ -454,37 +455,58 @@ void MainComponent::resized()
 {
     auto r = getLocalBounds();
 
-    // ---- Top bar: ~24% of height so name + tiles stay large ----
-    topBarH = juce::jlimit (kTopBarMin, 220, getHeight() * 24 / 100);
-    auto top = r.removeFromTop (topBarH).reduced (16, 10);
+    // ---- Top bar: animated collapse when editing parameters ----
+    const int fullTopBarH = juce::jlimit (kTopBarMin, 220, getHeight() * 24 / 100);
+    if (! topBarCollapsed)
+        targetTopBarH = (float) fullTopBarH;
+    topBarH = (int) currentTopBarH;
+    if (topBarH < 4)
+    {
+        // Fully collapsed — skip top bar layout, hide all children
+        for (auto* c : { (juce::Component*) &prevPresetBtn, (juce::Component*) &nextPresetBtn,
+                          (juce::Component*) &newPresetBtn, (juce::Component*) &savePresetBtn,
+                          (juce::Component*) &renamePresetBtn, (juce::Component*) &addButton,
+                          (juce::Component*) &settingsBtn, (juce::Component*) &presetNameLabel })
+            c->setVisible (false);
+    }
+    else
+    {
+        for (auto* c : { (juce::Component*) &prevPresetBtn, (juce::Component*) &nextPresetBtn,
+                          (juce::Component*) &newPresetBtn, (juce::Component*) &savePresetBtn,
+                          (juce::Component*) &renamePresetBtn, (juce::Component*) &addButton,
+                          (juce::Component*) &settingsBtn, (juce::Component*) &presetNameLabel })
+            c->setVisible (true);
 
-    // Layout:  [ ^v ] [ PRESET NAME .............. ] [ icon grid ]
-    const int gap = 8;
-    const int cell = juce::jlimit (52, 80, (top.getHeight() - 2 * gap) / 3);
+        auto top = r.removeFromTop (topBarH).reduced (16, 10);
 
-    // Right icon grid (equal squares)
-    //   [ save ] [ gear ]
-    //   [  ren ] [  +   ]
-    //   [ NEW  ]
-    const int gridW = cell * 2 + gap;
+        // Layout:  [ ^v ] [ PRESET NAME .............. ] [ icon grid ]
+        const int gap = 8;
+        const int idealCell = juce::jlimit (52, 80, (top.getHeight() - gap) / 2);
+        // Don't shrink below 48px (same idea as the up/down pairH clamping)
+        const int cell = juce::jmax (48, idealCell);
+
+    // Right icon grid (3 columns, 2 rows)
+    //   [ NEW  ] [ save ] [ ren  ]
+    //   [  +   ] [ gear ] [      ]
+    const int gridW = cell * 3 + gap * 2;
     auto gridArea = top.removeFromRight (gridW);
-    const int gridH = cell * 3 + gap * 2;
+    const int gridH = cell * 2 + gap;
     auto grid = gridArea.withSizeKeepingCentre (gridW, gridH);
     top.removeFromRight (12);
 
     {
-        auto colR = grid.removeFromRight (cell);
-        auto colL = grid.removeFromLeft (cell);
+        auto row0 = grid.removeFromTop (cell);
+        auto row1 = grid;
 
-        settingsBtn.setBounds (colR.removeFromTop (cell).reduced (2));
-        colR.removeFromTop (gap);
-        addButton.setBounds (colR.removeFromTop (cell).reduced (2));
+        newPresetBtn.setBounds (row0.removeFromLeft (cell).reduced (2));
+        row0.removeFromLeft (gap);
+        savePresetBtn.setBounds (row0.removeFromLeft (cell).reduced (2));
+        row0.removeFromLeft (gap);
+        renamePresetBtn.setBounds (row0.removeFromLeft (cell).reduced (2));
 
-        savePresetBtn.setBounds (colL.removeFromTop (cell).reduced (2));
-        colL.removeFromTop (gap);
-        renamePresetBtn.setBounds (colL.removeFromTop (cell).reduced (2));
-        colL.removeFromTop (gap);
-        newPresetBtn.setBounds (colL.removeFromTop (cell).reduced (2));
+        addButton.setBounds (row1.removeFromLeft (cell).reduced (2));
+        row1.removeFromLeft (gap);
+        settingsBtn.setBounds (row1.removeFromLeft (cell).reduced (2));
     }
 
     // LEFT: up/down chevrons (flat, no tile)
@@ -501,6 +523,7 @@ void MainComponent::resized()
     // Preset name fills the middle
     presetNameLabel.setBounds (top);
     updatePresetNameDisplay();
+    } // end topBarH >= 4
 
     // Trash sits at the bottom center, above the tab bar
     if (showTrash)
@@ -636,23 +659,34 @@ void MainComponent::resized()
         int contentH = juce::jmax (availH, rowCount * (blockH + gap) + 40);
         blocksContent.setSize (availW, contentH);
 
-        // Center blocks horizontally in each row
-        for (int ri = 0; ri < rows.size(); ++ri)
+        // Cache layout values for drag animation
+        cachedBlockH = blockH;
+        cachedBlockW = blockW;
+        cachedGap = gap;
+        cachedPerRow = perRowFinal;
+        cachedContentW = availW;
+
+        // Skip block positioning during drag — updateBlockDragAnimation handles it
+        if (! isDraggingBlock)
         {
-            const auto& row = rows.getReference (ri);
-            const int rowTotalW = row.count * blockW + (row.count - 1) * gap;
-            int x = juce::jmax (12, (availW - rowTotalW) / 2);
-            const int y = 20 + ri * (blockH + gap);
-            for (int c = 0; c < row.count; ++c)
+            // Center blocks horizontally in each row
+            for (int ri = 0; ri < rows.size(); ++ri)
             {
-                if (row.start + c < blocks.size())
-                    blocks[row.start + c]->setBounds (x, y, blockW, blockH);
-                x += blockW + gap;
+                const auto& row = rows.getReference (ri);
+                const int rowTotalW = row.count * blockW + (row.count - 1) * gap;
+                int x = juce::jmax (12, (availW - rowTotalW) / 2);
+                const int y = 20 + ri * (blockH + gap);
+                for (int c = 0; c < row.count; ++c)
+                {
+                    if (row.start + c < blocks.size())
+                        blocks[row.start + c]->setBounds (x, y, blockW, blockH);
+                    x += blockW + gap;
+                }
             }
         }
 
         // Auto-scroll: move viewport so the selected block's row is at the top
-        if (selectedIndex >= 0 && selectedIndex < n)
+        if (selectedIndex >= 0 && selectedIndex < n && ! isDraggingBlock)
         {
             const int selRow = selectedIndex / perRowFinal;
             const int targetY = selRow * (blockH + gap);
@@ -684,6 +718,7 @@ void MainComponent::rebuildBlocks()
 {
     DEV_LOGF ("rebuildBlocks ENTER: editorWindow=%p numPlugins=%d",
              (void*) editorWindow.get(), audioEngine.getPluginChain().getNumPlugins());
+    isDraggingBlock = false;
     blocks.clear();
     auto& chain = audioEngine.getPluginChain();
     for (int i = 0; i < chain.getNumPlugins(); ++i)
@@ -694,38 +729,56 @@ void MainComponent::rebuildBlocks()
         block->onSelected = [this] (int idx) { selectPlugin (idx); };
         block->onDragStarted = [this] (int idx)
         {
+            isDraggingBlock = true;
             dragSourceIndex = idx;
+            dragTargetIndex = idx;
             dragOverTrash = false;
             showTrash = true;
             trashZone.setVisible (true);
             trashZone.toFront (false);
+            trashZone.setButtonText ("X");
+            trashZone.setColour (juce::TextButton::buttonColourId, Theme::get().danger);
+            if (juce::isPositiveAndBelow (idx, blocks.size()))
+                blocks[idx]->setDragging (true);
             resized();
         };
         block->onDragEnded = [this]
         {
-            // Final hit-test: if released over trash, delete
+            isDraggingBlock = false;
             if (dragOverTrash && juce::isPositiveAndBelow (dragSourceIndex, blocks.size()))
             {
                 const int idx = dragSourceIndex;
                 dragSourceIndex = -1;
+                dragTargetIndex = -1;
                 dragOverTrash = false;
                 showTrash = false;
                 trashZone.setVisible (false);
                 removePlugin (idx);
                 return;
             }
-            if (juce::isPositiveAndBelow (dragSourceIndex, blocks.size()))
-                blocks[dragSourceIndex]->setDeleteHover (false);
+            // Reorder if target differs from source
+            if (dragTargetIndex != dragSourceIndex
+                && juce::isPositiveAndBelow (dragSourceIndex, blocks.size())
+                && juce::isPositiveAndBelow (dragTargetIndex, blocks.size()))
+            {
+                reorderPlugins (dragSourceIndex, dragTargetIndex);
+            }
+            else
+            {
+                // No reorder — just reset visuals
+                if (juce::isPositiveAndBelow (dragSourceIndex, blocks.size()))
+                    blocks[dragSourceIndex]->setDeleteHover (false);
+                for (auto* b : blocks) b->setDragging (false);
+            }
             dragSourceIndex = -1;
+            dragTargetIndex = -1;
             dragOverTrash = false;
             showTrash = false;
             trashZone.setVisible (false);
             trashZone.setButtonText ("X");
             trashZone.setColour (juce::TextButton::buttonColourId, Theme::get().danger);
-            for (auto* b : blocks) b->setDragging (false);
             resized();
         };
-        block->onReorder = [this] (int from, int to) { reorderPlugins (from, to); };
         block->onBypassToggled = [this] (int idx)
         {
             audioEngine.getPluginChain().toggleBypass (idx);
@@ -756,11 +809,18 @@ void MainComponent::selectPlugin (int index)
             parameterPanel->clear();
             parameterPanel->setVisible (false);
         }
+        topBarCollapsed = false;
+        targetTopBarH = (float) juce::jlimit (kTopBarMin, 220, getHeight() * 24 / 100);
+        currentTopBarH = (float) kTopBarMin; // expand from minimum, not zero — avoids mid-animation invisibility
         resized();
         return;
     }
 
     selectedIndex = index;
+    // Snap top bar immediately so there is only one animation (the param panel slide-in)
+    topBarCollapsed = true;
+    targetTopBarH = (float) kTopBarCollapsedH;
+    currentTopBarH = (float) kTopBarCollapsedH;
     for (int i = 0; i < blocks.size(); ++i)
         blocks[i]->setSelected (i == selectedIndex);
 
@@ -769,25 +829,34 @@ void MainComponent::selectPlugin (int index)
         if (selectedIndex >= 0)
         {
             auto& chain = audioEngine.getPluginChain();
-            parameterPanel->setPlugin (chain.getPluginInstance (selectedIndex), selectedIndex,
-                                       chain.isBypassed (selectedIndex),
-                                       chain.isMono (selectedIndex),
-                                       [this]
+            // Capture index by value so MIDI/header actions never hit the wrong slot
+            // if selection changes before the callback runs.
+            const int idx = selectedIndex;
+            parameterPanel->setPlugin (chain.getPluginInstance (idx), idx,
+                                       chain.isBypassed (idx),
+                                       chain.isMono (idx),
+                                       [this, idx]
                                        {
-                                           audioEngine.getPluginChain().toggleBypass (selectedIndex);
+                                           if (! juce::isPositiveAndBelow (idx, audioEngine.getPluginChain().getNumPlugins()))
+                                               return;
+                                           audioEngine.getPluginChain().toggleBypass (idx);
                                            rebuildBlocks();
-                                           parameterPanel->updateBypass (
-                                               audioEngine.getPluginChain().isBypassed (selectedIndex));
+                                           if (parameterPanel != nullptr && selectedIndex == idx)
+                                               parameterPanel->updateBypass (
+                                                   audioEngine.getPluginChain().isBypassed (idx));
                                        },
-                                       [this]
+                                       [this, idx]
                                        {
-                                           audioEngine.getPluginChain().toggleMono (selectedIndex);
+                                           if (! juce::isPositiveAndBelow (idx, audioEngine.getPluginChain().getNumPlugins()))
+                                               return;
+                                           audioEngine.getPluginChain().toggleMono (idx);
                                            rebuildBlocks();
-                                           parameterPanel->updateMono (
-                                               audioEngine.getPluginChain().isMono (selectedIndex));
+                                           if (parameterPanel != nullptr && selectedIndex == idx)
+                                               parameterPanel->updateMono (
+                                                   audioEngine.getPluginChain().isMono (idx));
                                        },
-                                       [this] { showColourPicker (selectedIndex); },
-                                       [this] { showPluginEditor (selectedIndex); });
+                                       [this, idx] { showColourPicker (idx); },
+                                       [this, idx] { showPluginEditor (idx); });
         }
         else
         {
@@ -807,6 +876,8 @@ void MainComponent::selectPlugin (int index)
             parameterPanel.get(), finalBounds, 1.0f, 340, false, 1.6, 0.3);
     }
 }
+
+static inline float lerp (float a, float b, float t) { return a + (b - a) * t; }
 
 void MainComponent::removePlugin (int index)
 {
@@ -836,6 +907,7 @@ void MainComponent::removePlugin (int index)
     if (selectedIndex == index)
     {
         selectedIndex = -1;
+        topBarCollapsed = false;
         if (parameterPanel)
         {
             parameterPanel->clear();
@@ -1264,6 +1336,7 @@ void MainComponent::newPreset()
     else
         audioEngine.getPluginChain().closeAllEditors();
     selectedIndex = -1;
+    topBarCollapsed = false;
     if (parameterPanel)
     {
         parameterPanel->clear();
@@ -1432,6 +1505,7 @@ void MainComponent::loadPreset (const juce::File& f)
     presetLoading = true;
 
     DevLog::log ("loadPreset BEGIN: " + f.getFullPathName());
+    Tone3000Client::get().cancelLogin(); // stop any OAuth loopback before chain rebuild
     DEV_LOGF ("loadPreset: editorWindow=%p presetLoading=%d presetAnimating=%d",
              (void*) editorWindow.get(), presetLoading, presetAnimating);
 
@@ -1456,6 +1530,7 @@ void MainComponent::loadPreset (const juce::File& f)
     audioEngine.getMidiLearnManager().cancelLearn();
 
     selectedIndex = -1;
+    topBarCollapsed = false;
     if (parameterPanel)
     {
         parameterPanel->clear();
@@ -1657,62 +1732,111 @@ void MainComponent::presetPrev()
 
 
 
-bool MainComponent::isInterestedInDragSource (const SourceDetails& d)
+//==============================================================================
+void MainComponent::updateBlockDragAnimation()
 {
-    return d.description.toString().startsWith ("PluginBlock:");
-}
+    const int n = blocks.size();
+    if (n == 0 || ! isDraggingBlock) return;
+    if (! juce::isPositiveAndBelow (dragSourceIndex, n)) return;
 
-void MainComponent::itemDragEnter (const SourceDetails& d)
-{
-    itemDragMove (d);
-}
+    const int bH = cachedBlockH;
+    const int bW = cachedBlockW;
+    const int gap = cachedGap;
+    const int perRow = juce::jmax (1, cachedPerRow);
 
-void MainComponent::itemDragMove (const SourceDetails& d)
-{
-    // Screen-space hit test against trash button
-    const auto screenPos = localPointToGlobal (d.localPosition.toInt());
-    const bool over = trashZone.isVisible() && trashZone.getScreenBounds().contains (screenPos);
+    // Convert mouse screen pos to blocksContent-local position
+    const auto localMouse = blocksContent.getLocalPoint (nullptr, dragMouseScreenPos.toFloat());
+    const int localMouseX = localMouse.getX();
+    const int localMouseY = localMouse.getY();
 
-    if (over != dragOverTrash)
+    // Determine target index based on mouse position (X for same-row, Y for cross-row)
+    int newTarget = dragSourceIndex;
+    const int step = bH + gap;
+    for (int i = 0; i < n; ++i)
     {
-        dragOverTrash = over;
-        trashZone.setButtonText (over ? "DROP" : "X");
-        trashZone.setColour (juce::TextButton::buttonColourId,
-                             over ? juce::Colour (0xffff1744) : juce::Colour (0xffc0392b));
-        if (juce::isPositiveAndBelow (dragSourceIndex, blocks.size()))
-            blocks[dragSourceIndex]->setDeleteHover (over);
+        if (i == dragSourceIndex) continue;
+        const int row = i / perRow;
+        const int col = i % perRow;
+        int rowCount = juce::jmin (perRow, n - row * perRow);
+        int rowTotalW = rowCount * bW + (rowCount - 1) * gap;
+        int rowStartX = juce::jmax (12, (cachedContentW - rowTotalW) / 2);
+        int bx = rowStartX + col * (bW + gap);
+        int bCenterX = bx + bW / 2;
+        int by = 20 + row * step;
+        int bCenterY = by + bH / 2;
+
+        // Cross-row: use Y
+        if (localMouseY < bCenterY && i <= dragSourceIndex)
+            newTarget = juce::jmin (newTarget, i);
+        else if (localMouseY > bCenterY && i >= dragSourceIndex)
+            newTarget = juce::jmax (newTarget, i);
+        // Same-row: use X (primary for horizontal layouts)
+        if (row == dragSourceIndex / perRow)
+        {
+            if (localMouseX < bCenterX && i <= dragSourceIndex)
+                newTarget = juce::jmin (newTarget, i);
+            else if (localMouseX > bCenterX && i >= dragSourceIndex)
+                newTarget = juce::jmax (newTarget, i);
+        }
     }
-}
+    // Clamp
+    newTarget = juce::jlimit (0, n - 1, newTarget);
+    dragTargetIndex = newTarget;
 
-void MainComponent::itemDragExit (const SourceDetails&)
-{
-    dragOverTrash = false;
-    trashZone.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffc0392b));
-    if (juce::isPositiveAndBelow (dragSourceIndex, blocks.size()))
-        blocks[dragSourceIndex]->setDeleteHover (false);
-}
+    // Position each block: non-dragged blocks shift to show where the dragged block will land
+    constexpr float lerpSpeed = 0.30f;
+    for (int i = 0; i < n; ++i)
+    {
+        if (i == dragSourceIndex) continue; // handled below
 
-void MainComponent::itemDropped (const SourceDetails& d)
-{
-    const int from = d.description.toString().fromFirstOccurrenceOf (":", false, false).getIntValue();
+        const int row = i / perRow;
+        const int col = i % perRow;
+        int rowCount = juce::jmin (perRow, n - row * perRow);
+        int rowTotalW = rowCount * bW + (rowCount - 1) * gap;
+        int rowStartX = juce::jmax (12, (cachedContentW - rowTotalW) / 2);
 
-    const auto screenPos = localPointToGlobal (d.localPosition.toInt());
-    const bool over = trashZone.isVisible()
-                      && (trashZone.getScreenBounds().expanded (12).contains (screenPos)
-                          || trashZone.getBounds().expanded (12).contains (d.localPosition.toInt()));
+        // Calculate this block's virtual position after the reorder
+        int virtualIdx = i;
+        if (dragSourceIndex < dragTargetIndex)
+        {
+            // Dragging right: blocks between source and target shift left
+            if (i > dragSourceIndex && i <= dragTargetIndex) virtualIdx = i - 1;
+        }
+        else if (dragSourceIndex > dragTargetIndex)
+        {
+            // Dragging left: blocks between target and source shift right
+            if (i >= dragTargetIndex && i < dragSourceIndex) virtualIdx = i + 1;
+        }
 
-    if (over || dragOverTrash)
-        removePlugin (from);
+        const int vRow = virtualIdx / perRow;
+        const int vCol = virtualIdx % perRow;
+        int vRowCount = juce::jmin (perRow, n - vRow * perRow);
+        int vRowTotalW = vRowCount * bW + (vRowCount - 1) * gap;
+        int vRowStartX = juce::jmax (12, (cachedContentW - vRowTotalW) / 2);
 
-    if (juce::isPositiveAndBelow (dragSourceIndex, blocks.size()))
-        blocks[dragSourceIndex]->setDeleteHover (false);
+        int targetX = vRowStartX + vCol * (bW + gap);
+        int targetY = 20 + vRow * step;
 
-    dragSourceIndex = -1;
-    dragOverTrash = false;
-    showTrash = false;
-    trashZone.setVisible (false);
-    trashZone.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffc0392b));
-    resized();
+        // Lerp toward target position
+        auto* b = blocks[i];
+        const float cx = (float) b->getX();
+        const float cy = (float) b->getY();
+        const float nx = cx + ((float) targetX - cx) * lerpSpeed;
+        const float ny = cy + ((float) targetY - cy) * lerpSpeed;
+        b->setBounds (juce::roundToInt (nx), juce::roundToInt (ny), bW, bH);
+    }
+
+    // Dragged block follows the mouse
+    auto* dragBlock = blocks[dragSourceIndex];
+    // Use mouse position for smooth following
+    float dragY = (float) juce::jlimit (20, blocksContent.getHeight() - bH, localMouseY - bH / 2);
+    float dragX = (float) juce::jlimit (0, cachedContentW - bW, localMouseX - bW / 2);
+    // Smooth follow
+    const float curY = (float) dragBlock->getY();
+    const float curX = (float) dragBlock->getX();
+    dragBlock->setBounds (juce::roundToInt (curX + (dragX - curX) * lerpSpeed),
+                          juce::roundToInt (curY + (dragY - curY) * lerpSpeed),
+                          bW, bH);
 }
 
 void MainComponent::mouseDown (const juce::MouseEvent& e)
@@ -1743,6 +1867,7 @@ void MainComponent::mouseDown (const juce::MouseEvent& e)
         || e.eventComponent == &blocksViewport)
     {
         selectedIndex = -1;
+        topBarCollapsed = false;
         for (auto* b : blocks) b->setSelected (false);
         if (parameterPanel)
         {
@@ -1751,6 +1876,17 @@ void MainComponent::mouseDown (const juce::MouseEvent& e)
         }
         resized();
     }
+}
+
+void MainComponent::mouseDrag (const juce::MouseEvent& e)
+{
+    if (! isDraggingBlock) return;
+    dragMouseScreenPos = e.getScreenPosition();
+}
+
+void MainComponent::mouseUp (const juce::MouseEvent&)
+{
+    // Block drag end is handled by PluginBlockComponent::mouseUp → onDragEnded
 }
 
 void MainComponent::showColourPicker (int pluginIndex)
@@ -1865,14 +2001,36 @@ void MainComponent::timerCallback()
     smoothInPeak  = juce::jmax (audioEngine.getInputPeak(),  smoothInPeak  * 0.85f);
     smoothOutPeak = juce::jmax (audioEngine.getOutputPeak(), smoothOutPeak * 0.85f);
 
-    // While dragging a block, poll mouse vs trash (works even if drop target is a block)
-    if (showTrash)
+    // Animate top bar collapse/expand (skip during block drag to avoid layout fights)
+    if (! isDraggingBlock)
     {
+        const float fullH = (float) juce::jlimit (kTopBarMin, 220, getHeight() * 24 / 100);
+        if (! topBarCollapsed)
+            targetTopBarH = fullH;
+        if (std::abs (currentTopBarH - targetTopBarH) > 0.5f)
+        {
+            currentTopBarH = lerp (currentTopBarH, targetTopBarH, 0.18f);
+            resized();
+        }
+        else if (currentTopBarH != targetTopBarH)
+        {
+            currentTopBarH = targetTopBarH;
+            resized();
+        }
+    }
+
+    // Block drag animation: update block positions and trash hover
+    if (isDraggingBlock)
+    {
+        updateBlockDragAnimation();
+
+        // Poll mouse vs trash
         const auto mouse = juce::Desktop::getInstance().getMainMouseSource().getScreenPosition().roundToInt();
         const bool over = trashZone.getScreenBounds().expanded (16).contains (mouse);
         if (over != dragOverTrash)
         {
             dragOverTrash = over;
+            trashZone.setButtonText (over ? "DROP" : "X");
             trashZone.setColour (juce::TextButton::buttonColourId,
                                  over ? juce::Colour (0xffff1744) : juce::Colour (0xffc0392b));
             if (juce::isPositiveAndBelow (dragSourceIndex, blocks.size()))

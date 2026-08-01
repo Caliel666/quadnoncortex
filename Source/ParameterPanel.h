@@ -1,6 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "MidiLearnManager.h"
+#include "NativeNam/NativeNamPanel.h"
 
 /** Horizontal drag adjusts value; vertical drag scrolls the parameter list (touch-friendly). */
 class TouchSlider : public juce::Slider
@@ -109,6 +110,7 @@ private:
     std::function<void()> monoToggleCallback;
     std::function<void()> colourCallback;
     std::function<void()> openEditorCallback;
+    std::unique_ptr<NativeNamPanel> nativeNamPanel;
 
     static constexpr int kRowHeight = 96;
 

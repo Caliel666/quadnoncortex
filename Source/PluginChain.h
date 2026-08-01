@@ -92,6 +92,7 @@ public:
 
     void loadKnownPluginsFromDisk();
     void saveKnownPluginsToDisk() const;
+    void ensureNativePlugins();
 
     void saveState (juce::XmlElement& parent) const;
     void loadState (const juce::XmlElement& parent);
