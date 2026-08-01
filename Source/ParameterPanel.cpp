@@ -288,6 +288,15 @@ void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginI
 
     titleLabel.setText (instance->getName(), juce::dontSendNotification);
 
+    // Always refresh header for THIS plugin index (bypass / mono / MIDI / colour)
+    // so switching to Native NAM never leaves the previous plugin's top-bar state.
+    updateBypass (bypassed);
+    updateMono (mono);
+    colourButton.onClick = [this] { if (colourCallback) colourCallback(); };
+    openEditorButton.onClick = [this] { if (openEditorCallback) openEditorCallback(); };
+    openEditorButton.setEnabled (instance != nullptr && instance->hasEditor());
+    refreshMidiButtons();
+
     // Native NAM gets a dedicated amp/pedal/cab + Tone3000 panel
     if (auto* nam = dynamic_cast<NativeNamProcessor*> (instance))
     {
@@ -299,11 +308,6 @@ void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginI
         return;
     }
 
-    updateBypass (bypassed);
-    updateMono (mono);
-    colourButton.onClick = [this] { if (colourCallback) colourCallback(); };
-    openEditorButton.onClick = [this] { if (openEditorCallback) openEditorCallback(); };
-    openEditorButton.setEnabled (instance != nullptr && instance->hasEditor());
 
     const auto& params = instance->getParameters();
     for (int i = 0; i < params.size(); ++i)
@@ -341,6 +345,17 @@ void ParameterPanel::clear()
     colourCallback = nullptr;
     openEditorCallback = nullptr;
     titleLabel.setText ({}, juce::dontSendNotification);
+
+    // Reset header so the next plugin never inherits stale MIDI / bypass chrome
+    bypassButton.setButtonText ("BYPASS");
+    bypassButton.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
+    monoButton.setButtonText ("STEREO");
+    monoButton.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
+    bypassLearnButton.setButtonText ("LEARN");
+    bypassLearnButton.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
+    bypassClearButton.setEnabled (false);
+    bypassClearButton.setAlpha (0.35f);
+    openEditorButton.setEnabled (false);
 }
 
 void ParameterPanel::updateParamValue (int paramIndex, float value)

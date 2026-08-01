@@ -1,8 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 
-class PluginBlockComponent : public juce::Component,
-                             public juce::DragAndDropTarget
+class PluginBlockComponent : public juce::Component
 {
 public:
     PluginBlockComponent (int index, const juce::String& name);
@@ -21,8 +20,6 @@ public:
     std::function<void(int)> onBypassToggled;
     std::function<void(int)> onDoubleTap;
     std::function<void(int)> onColourRequested;
-    std::function<void(int, int)> onReorder;
-    /** Fired when user starts dragging the block (for trash-zone UI). */
     std::function<void(int)> onDragStarted;
     std::function<void()>    onDragEnded;
 
@@ -32,11 +29,6 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp   (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
-
-    bool isInterestedInDragSource (const SourceDetails&) override;
-    void itemDropped (const SourceDetails&) override;
-    void itemDragEnter (const SourceDetails&) override;
-    void itemDragExit  (const SourceDetails&) override;
 
 private:
     int  pluginIndex = 0;

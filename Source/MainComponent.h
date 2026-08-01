@@ -13,7 +13,6 @@
 
 class MainComponent : public juce::Component,
                       public juce::DragAndDropContainer,
-                      public juce::DragAndDropTarget,
                       private juce::Timer
 {
 public:
@@ -56,14 +55,14 @@ private:
     void cycleBlockColour (int index);
     void paintMeter (juce::Graphics& g, juce::Rectangle<int> area, float peak);
     void mouseDown (const juce::MouseEvent&) override;
-    bool isInterestedInDragSource (const SourceDetails&) override;
-    void itemDropped (const SourceDetails&) override;
-    void itemDragEnter (const SourceDetails&) override;
-    void itemDragMove (const SourceDetails&) override;
-    void itemDragExit (const SourceDetails&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
     void showColourPicker (int pluginIndex);
     void paintConnectionLines (juce::Graphics& g, const juce::Rectangle<int>& area);
     int getBlockRow (int index) const;
+
+    /** During custom block drag: calculate target index and animate positions. */
+    void updateBlockDragAnimation();
 
     AudioEngine audioEngine;
 
@@ -95,8 +94,21 @@ private:
     std::unique_ptr<juce::DocumentWindow> editorWindow;
     juce::TextButton trashZone { "X" };
     bool showTrash = false;
+
+    // Custom block-drag reorder state
+    bool isDraggingBlock = false;
     int  dragSourceIndex = -1;
+    int  dragTargetIndex = -1;
     bool dragOverTrash = false;
+    juce::Point<int> dragMouseScreenPos;
+
+    // Cached layout values from last resized() — used during drag animation
+    int cachedBlockH = 96;
+    int cachedBlockW = 96;
+    int cachedGap = 16;
+    int cachedPerRow = 4;
+    int cachedContentW = 400;
+
     std::unique_ptr<juce::Component> nameOverlay;
     std::unique_ptr<juce::Component> settingsOverlay;
     float paramAnim = 1.0f;

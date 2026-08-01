@@ -12,12 +12,12 @@ NativeNamPanel::ControlRow::ControlRow (const juce::String& name, juce::AudioPro
 
     // Name label
     nameLabel.setText (name, juce::dontSendNotification);
-    nameLabel.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    nameLabel.setFont (juce::FontOptions (15.0f, juce::Font::bold));
     nameLabel.setColour (juce::Label::textColourId, th.text);
     addAndMakeVisible (nameLabel);
 
     // Value label (shows current value)
-    valueLabel.setFont (juce::FontOptions (12.0f));
+    valueLabel.setFont (juce::FontOptions (14.0f));
     valueLabel.setColour (juce::Label::textColourId, th.textDim);
     valueLabel.setJustificationType (juce::Justification::centredRight);
     if (param != nullptr)
@@ -146,33 +146,47 @@ void NativeNamPanel::ControlRow::paint (juce::Graphics& g)
 
 void NativeNamPanel::ControlRow::resized()
 {
-    auto r = getLocalBounds().reduced (4, 3);
+    // Match ParameterPanel::ParamRow proportions — tall touch-friendly rows
+    auto r = getLocalBounds().reduced (8, 6);
 
     if (isToggle)
     {
-        // Toggle: single row, full width
-        toggle.setBounds (r);
+        if (showMidi)
+        {
+            const int btnH = juce::jmin (44, r.getHeight());
+            const int btnY = r.getY() + (r.getHeight() - btnH) / 2;
+            clearBtn.setBounds (r.removeFromRight (44).withHeight (btnH).withY (btnY));
+            r.removeFromRight (6);
+            learnBtn.setBounds (r.removeFromRight (88).withHeight (btnH).withY (btnY));
+            r.removeFromRight (8);
+            toggle.setBounds (r);
+        }
+        else
+        {
+            toggle.setBounds (r);
+        }
         return;
     }
 
-    // Name on top-left, value on top-right
-    auto topRow = r.removeFromTop (18);
-    valueLabel.setBounds (topRow.removeFromRight (60));
+    // Name on top-left, value on top-right (same as ParamRow)
+    auto topRow = r.removeFromTop (22);
+    valueLabel.setBounds (topRow.removeFromRight (90));
     nameLabel.setBounds (topRow);
 
-    r.removeFromTop (2); // small gap
+    r.removeFromTop (4);
 
     if (showMidi)
     {
-        // Slider + learn/clear on same row
-        clearBtn.setBounds (r.removeFromRight (32).reduced (2));
-        r.removeFromRight (4);
-        learnBtn.setBounds (r.removeFromRight (60).reduced (2));
+        const int btnH = juce::jmin (40, r.getHeight());
+        const int btnY = r.getY() + (r.getHeight() - btnH) / 2;
+        clearBtn.setBounds (r.removeFromRight (44).withHeight (btnH).withY (btnY));
+        r.removeFromRight (6);
+        learnBtn.setBounds (r.removeFromRight (88).withHeight (btnH).withY (btnY));
+        r.removeFromRight (8);
         slider.setBounds (r);
     }
     else
     {
-        // Slider fills the full width below name
         slider.setBounds (r);
     }
 }
@@ -249,9 +263,9 @@ NativeNamPanel::NativeNamPanel (NativeNamProcessor& proc, MidiLearnManager& lear
         configPage.addAndMakeVisible (row.get());
         return row;
     };
-    bypassPedalRow = makeRow ("Bypass Pedal", processor.bypassPedalParam, 2);
-    bypassAmpRow   = makeRow ("Bypass Amp",   processor.bypassAmpParam,   3);
-    bypassCabRow   = makeRow ("Bypass Cab",   processor.bypassCabParam,   4);
+    bypassPedalRow = makeRow ("Bypass Pedal", processor.bypassPedalParam, 2, true);
+    bypassAmpRow   = makeRow ("Bypass Amp",   processor.bypassAmpParam,   3, true);
+    bypassCabRow   = makeRow ("Bypass Cab",   processor.bypassCabParam,   4, true);
     pedalMixRow    = makeRow ("Mix",          processor.pedalMixParam,    6);
     ampGainRow     = makeRow ("Gain",         processor.ampGainParam,     7);
     ampLowRow      = makeRow ("Bass",         processor.ampLowParam,      8);
@@ -817,7 +831,11 @@ void NativeNamPanel::resized()
         auto placeRow = [] (juce::Rectangle<int>& c, ControlRow* row)
         {
             if (row != nullptr)
-                row->setBounds (c.removeFromTop (52).reduced (0, 2));
+            {
+                // Match ParameterPanel row height (kRowHeight = 96) for touch
+                const int h = row->isToggle ? 56 : 88;
+                row->setBounds (c.removeFromTop (h).reduced (0, 3));
+            }
         };
 
         // Under each column
@@ -832,8 +850,8 @@ void NativeNamPanel::resized()
 
         placeRow (cabCol, bypassCabRow.get());
 
-        // Global settings row below the columns
-        auto global = configPage.getLocalBounds().removeFromBottom (170).reduced (8, 4);
+        // Global settings below the columns (tall rows)
+        auto global = configPage.getLocalBounds().removeFromBottom (280).reduced (8, 4);
         placeRow (global, liteRow.get());
         placeRow (global, inGainRow.get());
         placeRow (global, outGainRow.get());
@@ -896,18 +914,18 @@ void NativeNamPanel::resized()
 
 int NativeNamPanel::getPreferredHeight() const
 {
-    // tabs (40) + gap (6) + config/t3k content
+    // tabs + config/t3k content with tall ParameterPanel-style rows
     const int tabH = 46;
     if (currentTab == 0)
     {
-        // Slot headers: title(20) + name(40) + buttons(40) + gap(4) = 104 per column
-        // Column params: up to 5 rows x 52 = 260
-        // Global params: 3 rows x 52 = 156 + padding
-        return tabH + 8 + 104 + 260 + 170;
+        // Slot headers ~104; amp column has most controls (1 toggle + 4 sliders)
+        // toggles 56, sliders 88
+        const int ampCol = 56 + 4 * 88; // ~408
+        const int global = 56 + 2 * 88; // lite + in + out
+        return tabH + 8 + 104 + ampCol + global + 24;
     }
     else
     {
-        // t3k: status + key row + auth row + code row + hint + search row + pager + viewport
         return tabH + 8 + 28 + 40 + 40 + 40 + 24 + 40 + 36 + 200;
     }
 }
