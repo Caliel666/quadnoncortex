@@ -18,6 +18,8 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    int getPreferredHeight() const;
+
 private:
     void timerCallback() override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -32,16 +34,19 @@ private:
     void refreshMidiButtons();
     void applyTheme();
 
-    /** Compact control row: label | slider/toggle | LEARN | X — same idea as ParameterPanel::ParamRow */
+    /** Compact control row: name + value on top, slider below, optional MIDI LEARN/X. */
     struct ControlRow : public juce::Component
     {
         ControlRow (const juce::String& name, juce::AudioProcessorParameter* param,
-                    MidiLearnManager& mgr, int pluginIdx, int paramIdx);
+                    MidiLearnManager& mgr, int pluginIdx, int paramIdx,
+                    bool showMidiButtons = false);
+        void paint (juce::Graphics&) override;
         void resized() override;
         void updateLearnButton();
         void syncFromParam();
 
         juce::Label nameLabel;
+        juce::Label valueLabel;
         juce::Slider slider;
         juce::ToggleButton toggle;
         juce::TextButton learnBtn { "LEARN" }, clearBtn { "X" };
@@ -50,6 +55,7 @@ private:
         int pluginIndex = -1;
         int paramIndex = -1;
         bool isToggle = false;
+        bool showMidi = false;
     };
 
     NativeNamProcessor& processor;
@@ -236,6 +242,45 @@ private:
     void openSearchKeyboard();
     void closeSearchKeyboard (const juce::String& text);
     void updateAuthVisibility();
+
+    /** Small button that draws a clipboard icon via paintButton instead of text. */
+    class ClipboardButton : public juce::TextButton
+    {
+    public:
+        ClipboardButton() : juce::TextButton() {}
+        void paintButton (juce::Graphics& g, bool highlighted, bool down) override
+        {
+            auto& th = Theme::get();
+            auto b = getLocalBounds().toFloat().reduced (1.5f);
+            g.setColour (juce::Colours::black.withAlpha (0.18f));
+            g.fillRoundedRectangle (b.translated (0, 1.5f), 4.0f);
+            auto fill = th.surfaceAlt;
+            if (down) fill = fill.darker (0.12f);
+            else if (highlighted) fill = fill.brighter (0.08f);
+            g.setColour (fill);
+            g.fillRoundedRectangle (b, 4.0f);
+
+            g.setColour (th.text);
+            auto r = b.reduced (b.getWidth() * 0.30f, b.getHeight() * 0.25f);
+            const float x = r.getX(), y = r.getY(), w = r.getWidth(), h = r.getHeight();
+            // Clipboard body
+            juce::Path body;
+            body.addRoundedRectangle (x, y, w, h, 2.0f);
+            g.strokePath (body, juce::PathStrokeType (1.6f));
+            // Clip at top
+            g.fillRect (x, y, w, h * 0.10f);
+            // Paper sheet
+            const float px = x + w * 0.18f, py = y + h * 0.18f;
+            const float pw = w * 0.64f, ph = h * 0.72f;
+            g.fillRect (px, py, pw, ph);
+            g.setColour (fill.brighter (0.15f));
+            g.drawLine (px + pw * 0.4f, py, px + pw * 0.4f, py + ph, 1.0f);
+            g.drawLine (px, py + ph * 0.33f, px + pw, py + ph * 0.33f, 1.0f);
+            g.drawLine (px, py + ph * 0.66f, px + pw, py + ph * 0.66f, 1.0f);
+        }
+    };
+
+    ClipboardButton t3kPasteKeyBtn, t3kPasteCodeBtn;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NativeNamPanel)
 };

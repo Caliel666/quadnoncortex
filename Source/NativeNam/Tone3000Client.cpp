@@ -297,8 +297,11 @@ void Tone3000Client::startLoopbackServer()
     loopbackRunning = true;
     loopbackThread = std::make_unique<std::thread> ([this]
     {
+        // Bind to 0.0.0.0 to accept connections from any localhost alias
+        // (127.0.0.1, ::1, localhost). The redirect_uri uses "localhost" which the
+        // browser may resolve to either IPv4 or IPv6 depending on OS / DNS.
         juce::StreamingSocket server;
-        if (! server.createListener (kLoopbackPort, "0.0.0.0"))
+        if (! server.createListener (kLoopbackPort))
         {
             DevLog::log ("T3K: failed to bind loopback port " + juce::String (kLoopbackPort));
             juce::MessageManager::callAsync ([this]
@@ -310,7 +313,7 @@ void Tone3000Client::startLoopbackServer()
             loopbackRunning = false;
             return;
         }
-        DevLog::log ("T3K: loopback listening on 0.0.0.0:" + juce::String (kLoopbackPort));
+        DevLog::log ("T3K: loopback listening on 0.0.0.0:" + juce::String (kLoopbackPort) + " (all interfaces)");
         while (loopbackRunning.load())
         {
             std::unique_ptr<juce::StreamingSocket> client (server.waitForNextConnection());

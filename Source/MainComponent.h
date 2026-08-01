@@ -104,6 +104,11 @@ private:
     float presetAnim = 1.0f;
     bool presetAnimating = false;
     bool presetLoading = false;
+
+    // Top-bar collapse when editing parameters
+    bool topBarCollapsed = false;
+    float currentTopBarH = 140.0f;
+    float targetTopBarH = 140.0f;
     juce::uint32 lastPresetSwitchMs = 0;
     std::function<void(juce::String)> pendingNameCallback;
     juce::String pendingNameText;
@@ -113,6 +118,7 @@ private:
     int currentPresetIndex = -1;
 
     static constexpr int kTopBarMin = 120;
+    static constexpr int kTopBarCollapsedH = 0; // fully hidden
     int topBarH = 140; // set in resized()
     static constexpr int kSideW  = 72;
     static constexpr int kTabH   = 56;

@@ -455,15 +455,37 @@ void MainComponent::resized()
 {
     auto r = getLocalBounds();
 
-    // ---- Top bar: ~24% of height so name + tiles stay large ----
-    topBarH = juce::jlimit (kTopBarMin, 220, getHeight() * 24 / 100);
-    auto top = r.removeFromTop (topBarH).reduced (16, 10);
+    // ---- Top bar: animated collapse when editing parameters ----
+    const int fullTopBarH = juce::jlimit (kTopBarMin, 220, getHeight() * 24 / 100);
+    if (! topBarCollapsed)
+        targetTopBarH = (float) fullTopBarH;
+    topBarH = (int) currentTopBarH;
+    if (topBarH < 4)
+    {
+        // Fully collapsed — skip top bar layout, hide all children
+        for (auto* c : { (juce::Component*) &prevPresetBtn, (juce::Component*) &nextPresetBtn,
+                          (juce::Component*) &newPresetBtn, (juce::Component*) &savePresetBtn,
+                          (juce::Component*) &renamePresetBtn, (juce::Component*) &addButton,
+                          (juce::Component*) &settingsBtn, (juce::Component*) &presetNameLabel })
+            c->setVisible (false);
+    }
+    else
+    {
+        for (auto* c : { (juce::Component*) &prevPresetBtn, (juce::Component*) &nextPresetBtn,
+                          (juce::Component*) &newPresetBtn, (juce::Component*) &savePresetBtn,
+                          (juce::Component*) &renamePresetBtn, (juce::Component*) &addButton,
+                          (juce::Component*) &settingsBtn, (juce::Component*) &presetNameLabel })
+            c->setVisible (true);
 
-    // Layout:  [ ^v ] [ PRESET NAME .............. ] [ icon grid ]
-    const int gap = 8;
-    const int cell = juce::jlimit (52, 80, (top.getHeight() - 2 * gap) / 3);
+        auto top = r.removeFromTop (topBarH).reduced (16, 10);
 
-    // Right icon grid (equal squares)
+        // Layout:  [ ^v ] [ PRESET NAME .............. ] [ icon grid ]
+        const int gap = 8;
+        const int idealCell = juce::jlimit (52, 80, (top.getHeight() - 2 * gap) / 3);
+        // Don't shrink below 48px (same idea as the up/down pairH clamping)
+        const int cell = juce::jmax (48, idealCell);
+
+    // Right icon grid (equal squares) — capped height, won't shrink to zero
     //   [ save ] [ gear ]
     //   [  ren ] [  +   ]
     //   [ NEW  ]
@@ -502,6 +524,7 @@ void MainComponent::resized()
     // Preset name fills the middle
     presetNameLabel.setBounds (top);
     updatePresetNameDisplay();
+    } // end topBarH >= 4
 
     // Trash sits at the bottom center, above the tab bar
     if (showTrash)
@@ -757,11 +780,18 @@ void MainComponent::selectPlugin (int index)
             parameterPanel->clear();
             parameterPanel->setVisible (false);
         }
+        topBarCollapsed = false;
+        targetTopBarH = (float) juce::jlimit (kTopBarMin, 220, getHeight() * 24 / 100);
+        currentTopBarH = (float) kTopBarMin; // expand from minimum, not zero — avoids mid-animation invisibility
         resized();
         return;
     }
 
     selectedIndex = index;
+    // Snap top bar immediately so there is only one animation (the param panel slide-in)
+    topBarCollapsed = true;
+    targetTopBarH = (float) kTopBarCollapsedH;
+    currentTopBarH = (float) kTopBarCollapsedH;
     for (int i = 0; i < blocks.size(); ++i)
         blocks[i]->setSelected (i == selectedIndex);
 
@@ -809,6 +839,8 @@ void MainComponent::selectPlugin (int index)
     }
 }
 
+static inline float lerp (float a, float b, float t) { return a + (b - a) * t; }
+
 void MainComponent::removePlugin (int index)
 {
     DEV_LOGF ("removePlugin ENTER index=%d", index);
@@ -837,6 +869,7 @@ void MainComponent::removePlugin (int index)
     if (selectedIndex == index)
     {
         selectedIndex = -1;
+        topBarCollapsed = false;
         if (parameterPanel)
         {
             parameterPanel->clear();
@@ -1265,6 +1298,7 @@ void MainComponent::newPreset()
     else
         audioEngine.getPluginChain().closeAllEditors();
     selectedIndex = -1;
+    topBarCollapsed = false;
     if (parameterPanel)
     {
         parameterPanel->clear();
@@ -1458,6 +1492,7 @@ void MainComponent::loadPreset (const juce::File& f)
     audioEngine.getMidiLearnManager().cancelLearn();
 
     selectedIndex = -1;
+    topBarCollapsed = false;
     if (parameterPanel)
     {
         parameterPanel->clear();
@@ -1745,6 +1780,7 @@ void MainComponent::mouseDown (const juce::MouseEvent& e)
         || e.eventComponent == &blocksViewport)
     {
         selectedIndex = -1;
+        topBarCollapsed = false;
         for (auto* b : blocks) b->setSelected (false);
         if (parameterPanel)
         {
@@ -1866,6 +1902,21 @@ void MainComponent::timerCallback()
         tuner->setSampleRate (audioEngine.getSampleRate());
     smoothInPeak  = juce::jmax (audioEngine.getInputPeak(),  smoothInPeak  * 0.85f);
     smoothOutPeak = juce::jmax (audioEngine.getOutputPeak(), smoothOutPeak * 0.85f);
+
+    // Animate top bar collapse/expand
+    const float fullH = (float) juce::jlimit (kTopBarMin, 220, getHeight() * 24 / 100);
+    if (! topBarCollapsed)
+        targetTopBarH = fullH;
+    if (std::abs (currentTopBarH - targetTopBarH) > 0.5f)
+    {
+        currentTopBarH = lerp (currentTopBarH, targetTopBarH, 0.18f);
+        resized();
+    }
+    else if (currentTopBarH != targetTopBarH)
+    {
+        currentTopBarH = targetTopBarH;
+        resized();
+    }
 
     // While dragging a block, poll mouse vs trash (works even if drop target is a block)
     if (showTrash)

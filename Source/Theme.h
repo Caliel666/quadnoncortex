@@ -403,7 +403,7 @@ private:
                        juce::uint32 accent, juce::uint32 accentSoft,
                        juce::uint32 danger, juce::uint32 success, juce::uint32 warning,
                        juce::uint32 overlay, juce::uint32 keyFace, juce::uint32 keyFacePressed,
-                       juce::uint32 topBar, juce::uint32 tabIdle, juce::uint32 tabActive)
+                       juce::uint32 topBar, juce::uint32 tabIdleVal, juce::uint32 tabActiveVal)
     {
         auto f = themesDir().getChildFile (name + ".xml");
         juce::XmlElement root ("Theme");
@@ -429,8 +429,8 @@ private:
         put ("keyFace", keyFace);
         put ("keyFacePressed", keyFacePressed);
         put ("topBar", topBar);
-        put ("tabIdle", tabIdle);
-        put ("tabActive", tabActive);
+        put ("tabIdle", tabIdleVal);
+        put ("tabActive", tabActiveVal);
         root.writeTo (f);
     }
 };

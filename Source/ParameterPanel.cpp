@@ -420,7 +420,8 @@ void ParameterPanel::resized()
     viewport.setBounds (r);
     if (nativeNamPanel != nullptr)
     {
-        content.setSize (viewport.getWidth() - 8, juce::jmax (420, viewport.getHeight()));
+        const int preferredH = nativeNamPanel->getPreferredHeight();
+        content.setSize (viewport.getWidth() - 8, juce::jmax (preferredH, viewport.getHeight()));
         nativeNamPanel->setBounds (0, 0, content.getWidth(), content.getHeight());
         return;
     }
