@@ -130,7 +130,7 @@ void PluginBrowser::applyFilter()
 
     for (const auto& desc : types)
     {
-        if (desc.pluginFormatName != "VST3")
+        if (desc.pluginFormatName != "VST3" && desc.pluginFormatName != "Internal" && desc.pluginFormatName != "Native")
             continue;
         if (q.isNotEmpty())
         {

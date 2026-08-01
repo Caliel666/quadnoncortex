@@ -1,6 +1,7 @@
 #include "MainComponent.h"
 #include "DevLog.h"
 #include "Theme.h"
+#include "NativeNam/Tone3000Client.h"
 
 static const juce::uint32 kPalette[] = {
     0xffe67e22, 0xffe74c3c, 0xff9b59b6, 0xff3498db,
@@ -1432,6 +1433,7 @@ void MainComponent::loadPreset (const juce::File& f)
     presetLoading = true;
 
     DevLog::log ("loadPreset BEGIN: " + f.getFullPathName());
+    Tone3000Client::get().cancelLogin(); // stop any OAuth loopback before chain rebuild
     DEV_LOGF ("loadPreset: editorWindow=%p presetLoading=%d presetAnimating=%d",
              (void*) editorWindow.get(), presetLoading, presetAnimating);
 

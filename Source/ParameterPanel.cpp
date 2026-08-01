@@ -1,5 +1,6 @@
 #include "ParameterPanel.h"
 #include "Theme.h"
+#include "NativeNam/NativeNamProcessor.h"
 
 ParameterPanel::ParamRow::ParamRow (int paramIdx, juce::AudioProcessorParameter* param,
                                     MidiLearnManager& mgr, int pluginIdx)
@@ -286,6 +287,18 @@ void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginI
     }
 
     titleLabel.setText (instance->getName(), juce::dontSendNotification);
+
+    // Native NAM gets a dedicated amp/pedal/cab + Tone3000 panel
+    if (auto* nam = dynamic_cast<NativeNamProcessor*> (instance))
+    {
+        nativeNamPanel.reset (new NativeNamPanel (*nam, midiLearn, pluginIndex));
+        content.addAndMakeVisible (nativeNamPanel.get());
+        rows.clear(); // no generic param rows
+        setVisible (true);
+        resized();
+        return;
+    }
+
     updateBypass (bypassed);
     updateMono (mono);
     colourButton.onClick = [this] { if (colourCallback) colourCallback(); };
@@ -320,6 +333,7 @@ void ParameterPanel::clear()
                 p->removeListener (this);
     }
     rows.clear();
+    nativeNamPanel.reset();
     currentPlugin = nullptr;
     currentPluginIndex = -1;
     bypassCallback = nullptr;
@@ -404,6 +418,12 @@ void ParameterPanel::resized()
     titleLabel.setBounds (top);
 
     viewport.setBounds (r);
+    if (nativeNamPanel != nullptr)
+    {
+        content.setSize (viewport.getWidth() - 8, juce::jmax (420, viewport.getHeight()));
+        nativeNamPanel->setBounds (0, 0, content.getWidth(), content.getHeight());
+        return;
+    }
     const int contentHeight = rows.size() * kRowHeight;
     content.setSize (viewport.getWidth() - 8, juce::jmax (contentHeight, viewport.getHeight()));
     int y = 0;
