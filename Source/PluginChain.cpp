@@ -6,6 +6,7 @@
 #include "NativePlugins/Reverb/ReverbProcessor.h"
 #include "NativePlugins/Compressor/CompressorProcessor.h"
 #include "NativePlugins/Limiter/LimiterProcessor.h"
+#include "NativePlugins/Denoiser/DenoiserProcessor.h"
 
 static void configureBuses (juce::AudioPluginInstance& inst, double sr, int bs, bool prepared)
 {
@@ -62,6 +63,7 @@ void PluginChain::ensureNativePlugins()
         ReverbProcessor::makeDescription(),
         CompressorProcessor::makeDescription(),
         LimiterProcessor::makeDescription(),
+        DenoiserProcessor::makeDescription(),
     };
 
     // Drop previous native entries so we always re-register current set
@@ -277,6 +279,11 @@ static std::unique_ptr<juce::AudioPluginInstance> createNativeInstance (
         || desc.uniqueId == LimiterProcessor::kUid
         || desc.name == LimiterProcessor::kName)
         return prepare (std::make_unique<LimiterProcessor>());
+
+    if (desc.fileOrIdentifier == DenoiserProcessor::kId
+        || desc.uniqueId == DenoiserProcessor::kUid
+        || desc.name == DenoiserProcessor::kName)
+        return prepare (std::make_unique<DenoiserProcessor>());
 
     return nullptr;
 }

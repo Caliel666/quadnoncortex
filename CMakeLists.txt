@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(quadnoncortex VERSION 1.1.0)
+project(quadnoncortex VERSION 1.1.1)
 
 # Multi-config (VS): add Dev = RelWithDebInfo + QUADNONCORTEX_DEV
 if (CMAKE_CONFIGURATION_TYPES)
@@ -25,7 +25,7 @@ juce_add_gui_app(quadnoncortex
     PRODUCT_NAME "quadnoncortex"
     COMPANY_NAME "quadnoncortex"
     BUNDLE_ID    "com.quadnoncortex.app"
-    VERSION      "1.1.0"
+    VERSION      "1.1.1"
     NEEDS_CURL   TRUE
     NEEDS_WEB_BROWSER FALSE
 )
@@ -66,6 +66,7 @@ target_sources(quadnoncortex
         Source/NativePlugins/Reverb/ReverbProcessor.cpp
         Source/NativePlugins/Compressor/CompressorProcessor.cpp
         Source/NativePlugins/Limiter/LimiterProcessor.cpp
+        Source/NativePlugins/Denoiser/DenoiserProcessor.cpp
 )
 
 target_compile_definitions(quadnoncortex
