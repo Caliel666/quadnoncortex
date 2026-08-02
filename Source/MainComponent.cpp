@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "NativePlugins/Splitter/SplitterProcessor.h"
 #include "DevLog.h"
 #include "Theme.h"
 #include "NativeNam/Tone3000Client.h"
@@ -629,70 +630,161 @@ void MainComponent::resized()
                 parameterPanel->setVisible (false);
         }
 
-        // Build rows dynamically
-        struct Row { int start = 0, count = 0; };
-        juce::Array<Row> rows;
+        // Topology layout matching parallel-lane pedalboards:
+        //   [trunk] → [SPLIT] ┬ [lane A left→right] ┬ [JOIN] → [trunk]
+        //                     └ [lane B left→right] ┘
+        // Lanes always occupy fixed vertical tracks; columns align across lanes.
+        struct Place { int index = 0; int row = 0; int col = 0; };
+        juce::Array<Place> places;
+
         {
-            int i = 0;
-            while (i < n)
+            auto& chain = audioEngine.getPluginChain();
+            int col = 0;
+            int inParallel = 0; // active lane count while inside a split region
+            juce::Array<int> laneCols; // next free column per lane (1-based lanes)
+
+            for (int i = 0; i < n; ++i)
             {
-                Row row;
-                row.start = i;
-                // Dynamic: fill as many as fit in width
-                int rowUsed = 0;
-                while (i < n)
+                auto* inst = chain.getPluginInstance (i);
+                const bool isSplitter = inst != nullptr && inst->getName() == "Splitter";
+                bool isJoin = false;
+                int numLanes = 2;
+                if (isSplitter)
                 {
-                    int nextW = (rowUsed == 0) ? blockW : blockW + gap;
-                    if (rowUsed > 0 && rowUsed + blockW + gap > availW - 48)
-                        break;
-                    row.count++;
-                    rowUsed += (row.count == 1) ? blockW : blockW + gap;
-                    i++;
+                    if (auto* sp = dynamic_cast<SplitterProcessor*> (inst))
+                    {
+                        isJoin = (sp->getMode() == SplitterProcessor::Mode::Join);
+                        numLanes = sp->getNumLanesActive();
+                    }
                 }
-                if (row.count == 0) { row.count = 1; i++; } // safety
-                rows.add (row);
+
+                if (isSplitter && ! isJoin)
+                {
+                    // Split sits on the centre track
+                    places.add ({ i, 0, col });
+                    inParallel = numLanes;
+                    laneCols.clear();
+                    for (int L = 0; L < numLanes; ++L)
+                        laneCols.add (col + 1); // first lane plugin column after split
+                    col += 1;
+                    continue;
+                }
+
+                if (isSplitter && isJoin)
+                {
+                    // Join column = max lane progress
+                    int joinCol = col;
+                    for (int c : laneCols)
+                        joinCol = juce::jmax (joinCol, c);
+                    places.add ({ i, 0, joinCol });
+                    col = joinCol + 1;
+                    inParallel = 0;
+                    laneCols.clear();
+                    continue;
+                }
+
+                if (inParallel > 0)
+                {
+                    int lane = chain.getLane (i);
+                    if (lane <= 0) lane = 1;
+                    lane = juce::jlimit (1, inParallel, lane);
+
+                    // Fixed tracks: lane1 = top (-1), lane2 = bottom (+1),
+                    // lane3 = higher, lane4 = lower...
+                    int row = (lane == 1) ? -1
+                            : (lane == 2) ?  1
+                            : (lane == 3) ? -2
+                            :                2;
+
+                    places.add ({ i, row, laneCols[lane - 1] });
+                    laneCols.set (lane - 1, laneCols[lane - 1] + 1);
+                }
+                else
+                {
+                    places.add ({ i, 0, col });
+                    col += 1;
+                }
             }
         }
 
-        // If only one partial row fits, allow vertical scrolling
-        const int rowCount = rows.size();
-        int contentH = juce::jmax (availH, rowCount * (blockH + gap) + 40);
-        blocksContent.setSize (availW, contentH);
+        int minRow = 0, maxRow = 0, maxCol = 0;
+        for (const auto& pl : places)
+        {
+            minRow = juce::jmin (minRow, pl.row);
+            maxRow = juce::jmax (maxRow, pl.row);
+            maxCol = juce::jmax (maxCol, pl.col);
+        }
+        // Always reserve top+bottom tracks when any split exists so lanes stay visible
+        bool anySplit = false;
+        for (int i = 0; i < n; ++i)
+        {
+            auto* inst = audioEngine.getPluginChain().getPluginInstance (i);
+            if (inst != nullptr && inst->getName() == "Splitter")
+            {
+                if (auto* sp = dynamic_cast<SplitterProcessor*> (inst))
+                    if (sp->getMode() == SplitterProcessor::Mode::Split)
+                        anySplit = true;
+            }
+        }
+        if (anySplit)
+        {
+            minRow = juce::jmin (minRow, -1);
+            maxRow = juce::jmax (maxRow,  1);
+        }
 
-        // Cache layout values for drag animation
+        const int rowCount = maxRow - minRow + 1;
+        const int colCount = maxCol + 1;
+
+        // Fit blocks so the whole graph is centred in the viewport
+        const int gridW = colCount * blockW + juce::jmax (0, colCount - 1) * gap;
+        const int gridH = rowCount * blockH + juce::jmax (0, rowCount - 1) * gap;
+        int contentW = juce::jmax (availW, gridW + 48);
+        int contentH = juce::jmax (availH, gridH + 48);
+        blocksContent.setSize (contentW, contentH);
+
         cachedBlockH = blockH;
         cachedBlockW = blockW;
         cachedGap = gap;
-        cachedPerRow = perRowFinal;
-        cachedContentW = availW;
+        cachedPerRow = juce::jmax (1, colCount);
+        cachedContentW = contentW;
 
-        // Skip block positioning during drag — updateBlockDragAnimation handles it
-        if (! isDraggingBlock)
+        // Store places for connection painter / drag snap via block properties
+        // (block indices already match)
+
         {
-            // Center blocks horizontally in each row
-            for (int ri = 0; ri < rows.size(); ++ri)
+            const int originX = (contentW - gridW) / 2;
+            const int originY = (contentH - gridH) / 2;
+            for (const auto& pl : places)
             {
-                const auto& row = rows.getReference (ri);
-                const int rowTotalW = row.count * blockW + (row.count - 1) * gap;
-                int x = juce::jmax (12, (availW - rowTotalW) / 2);
-                const int y = 20 + ri * (blockH + gap);
-                for (int c = 0; c < row.count; ++c)
-                {
-                    if (row.start + c < blocks.size())
-                        blocks[row.start + c]->setBounds (x, y, blockW, blockH);
-                    x += blockW + gap;
-                }
+                if (! juce::isPositiveAndBelow (pl.index, blocks.size()))
+                    continue;
+                // While dragging, leave the dragged block alone (follows mouse)
+                if (isDraggingBlock && pl.index == dragSourceIndex)
+                    continue;
+                const int ri = pl.row - minRow;
+                const int x = originX + pl.col * (blockW + gap);
+                const int y = originY + ri * (blockH + gap);
+                blocks[pl.index]->setBounds (x, y, blockW, blockH);
             }
         }
 
-        // Auto-scroll: move viewport so the selected block's row is at the top
-        if (selectedIndex >= 0 && selectedIndex < n && ! isDraggingBlock)
+        // Keep selected block visible: scroll so it sits near the top of the viewport
+        if (selectedIndex >= 0 && selectedIndex < n && ! isDraggingBlock
+            && juce::isPositiveAndBelow (selectedIndex, blocks.size()))
         {
-            const int selRow = selectedIndex / perRowFinal;
-            const int targetY = selRow * (blockH + gap);
-            const int maxScroll = juce::jmax (0, contentH - blocksViewport.getHeight());
-            const int scrollY = juce::jmin (targetY - 10, maxScroll);
-            blocksViewport.setViewPosition (0, juce::jmax (0, scrollY));
+            auto* sel = blocks[selectedIndex];
+            if (sel != nullptr)
+            {
+                const int viewH = blocksViewport.getHeight();
+                const int maxScroll = juce::jmax (0, contentH - viewH);
+                // Prefer showing selected near top, with a bit of padding
+                int scrollY = sel->getY() - 12;
+                // If bottom lane would be clipped with param panel, shift up more
+                if (sel->getBottom() - scrollY > viewH - 8)
+                    scrollY = sel->getBottom() - viewH + 8;
+                scrollY = juce::jlimit (0, maxScroll, scrollY);
+                blocksViewport.setViewPosition (0, scrollY);
+            }
         }
     }
     else
@@ -756,6 +848,33 @@ void MainComponent::rebuildBlocks()
                 removePlugin (idx);
                 return;
             }
+            // Snap lane from vertical position if inside a parallel region
+            if (juce::isPositiveAndBelow (dragSourceIndex, blocks.size()))
+            {
+                auto& chain = audioEngine.getPluginChain();
+                const int owner = chain.getSplitOwner (dragSourceIndex);
+                if (owner >= 0)
+                {
+                    int lanes = 2;
+                    if (auto* sp = dynamic_cast<SplitterProcessor*> (chain.getPluginInstance (owner)))
+                        lanes = sp->getNumLanesActive();
+                    // Compare block centre Y to split centre → top = lane 1, bottom = lane 2
+                    auto* splitB = blocks[owner];
+                    auto* moved = blocks[dragSourceIndex];
+                    if (splitB != nullptr && moved != nullptr)
+                    {
+                        const int midY = splitB->getY() + splitB->getHeight() / 2;
+                        const int by = moved->getY() + moved->getHeight() / 2;
+                        int lane = (by < midY) ? 1 : 2;
+                        if (lanes >= 3 && by < midY - splitB->getHeight())
+                            lane = 3;
+                        if (lanes >= 4 && by > midY + splitB->getHeight())
+                            lane = 4;
+                        chain.setLane (dragSourceIndex, juce::jlimit (1, lanes, lane));
+                    }
+                }
+            }
+
             // Reorder if target differs from source
             if (dragTargetIndex != dragSourceIndex
                 && juce::isPositiveAndBelow (dragSourceIndex, blocks.size())
@@ -1735,103 +1854,62 @@ void MainComponent::presetPrev()
 //==============================================================================
 void MainComponent::updateBlockDragAnimation()
 {
+    // Keep topology: other blocks stay put. Only the dragged block follows the mouse.
     const int n = blocks.size();
     if (n == 0 || ! isDraggingBlock) return;
     if (! juce::isPositiveAndBelow (dragSourceIndex, n)) return;
 
-    const int bH = cachedBlockH;
-    const int bW = cachedBlockW;
-    const int gap = cachedGap;
-    const int perRow = juce::jmax (1, cachedPerRow);
-
-    // Convert mouse screen pos to blocksContent-local position
+    const int bH = cachedBlockH > 0 ? cachedBlockH : 96;
+    const int bW = cachedBlockW > 0 ? cachedBlockW : 96;
     const auto localMouse = blocksContent.getLocalPoint (nullptr, dragMouseScreenPos.toFloat());
     const int localMouseX = localMouse.getX();
     const int localMouseY = localMouse.getY();
 
-    // Determine target index based on mouse position (X for same-row, Y for cross-row)
+    auto& chain = audioEngine.getPluginChain();
+
+    // Target = nearest other block (for reorder on drop)
     int newTarget = dragSourceIndex;
-    const int step = bH + gap;
+    int bestDist = 0x7fffffff;
     for (int i = 0; i < n; ++i)
     {
         if (i == dragSourceIndex) continue;
-        const int row = i / perRow;
-        const int col = i % perRow;
-        int rowCount = juce::jmin (perRow, n - row * perRow);
-        int rowTotalW = rowCount * bW + (rowCount - 1) * gap;
-        int rowStartX = juce::jmax (12, (cachedContentW - rowTotalW) / 2);
-        int bx = rowStartX + col * (bW + gap);
-        int bCenterX = bx + bW / 2;
-        int by = 20 + row * step;
-        int bCenterY = by + bH / 2;
-
-        // Cross-row: use Y
-        if (localMouseY < bCenterY && i <= dragSourceIndex)
-            newTarget = juce::jmin (newTarget, i);
-        else if (localMouseY > bCenterY && i >= dragSourceIndex)
-            newTarget = juce::jmax (newTarget, i);
-        // Same-row: use X (primary for horizontal layouts)
-        if (row == dragSourceIndex / perRow)
-        {
-            if (localMouseX < bCenterX && i <= dragSourceIndex)
-                newTarget = juce::jmin (newTarget, i);
-            else if (localMouseX > bCenterX && i >= dragSourceIndex)
-                newTarget = juce::jmax (newTarget, i);
-        }
-    }
-    // Clamp
-    newTarget = juce::jlimit (0, n - 1, newTarget);
-    dragTargetIndex = newTarget;
-
-    // Position each block: non-dragged blocks shift to show where the dragged block will land
-    constexpr float lerpSpeed = 0.30f;
-    for (int i = 0; i < n; ++i)
-    {
-        if (i == dragSourceIndex) continue; // handled below
-
-        const int row = i / perRow;
-        const int col = i % perRow;
-        int rowCount = juce::jmin (perRow, n - row * perRow);
-        int rowTotalW = rowCount * bW + (rowCount - 1) * gap;
-        int rowStartX = juce::jmax (12, (cachedContentW - rowTotalW) / 2);
-
-        // Calculate this block's virtual position after the reorder
-        int virtualIdx = i;
-        if (dragSourceIndex < dragTargetIndex)
-        {
-            // Dragging right: blocks between source and target shift left
-            if (i > dragSourceIndex && i <= dragTargetIndex) virtualIdx = i - 1;
-        }
-        else if (dragSourceIndex > dragTargetIndex)
-        {
-            // Dragging left: blocks between target and source shift right
-            if (i >= dragTargetIndex && i < dragSourceIndex) virtualIdx = i + 1;
-        }
-
-        const int vRow = virtualIdx / perRow;
-        const int vCol = virtualIdx % perRow;
-        int vRowCount = juce::jmin (perRow, n - vRow * perRow);
-        int vRowTotalW = vRowCount * bW + (vRowCount - 1) * gap;
-        int vRowStartX = juce::jmax (12, (cachedContentW - vRowTotalW) / 2);
-
-        int targetX = vRowStartX + vCol * (bW + gap);
-        int targetY = 20 + vRow * step;
-
-        // Lerp toward target position
         auto* b = blocks[i];
-        const float cx = (float) b->getX();
-        const float cy = (float) b->getY();
-        const float nx = cx + ((float) targetX - cx) * lerpSpeed;
-        const float ny = cy + ((float) targetY - cy) * lerpSpeed;
-        b->setBounds (juce::roundToInt (nx), juce::roundToInt (ny), bW, bH);
+        if (b == nullptr) continue;
+        const int cx = b->getX() + b->getWidth() / 2;
+        const int cy = b->getY() + b->getHeight() / 2;
+        const int d = std::abs (cx - localMouseX) + std::abs (cy - localMouseY);
+        if (d < bestDist) { bestDist = d; newTarget = i; }
+    }
+    dragTargetIndex = juce::jlimit (0, n - 1, newTarget);
+
+    // Live lane snap from vertical position relative to splitter
+    const int owner = chain.getSplitOwner (dragSourceIndex);
+    if (owner >= 0 && juce::isPositiveAndBelow (owner, blocks.size()))
+    {
+        auto* splitB = blocks[owner];
+        if (splitB != nullptr)
+        {
+            int lanes = 2;
+            if (auto* sp = dynamic_cast<SplitterProcessor*> (chain.getPluginInstance (owner)))
+                lanes = sp->getNumLanesActive();
+            const int midY = splitB->getY() + splitB->getHeight() / 2;
+            int lane = (localMouseY < midY) ? 1 : 2;
+            if (lanes >= 3 && localMouseY < midY - bH) lane = 3;
+            if (lanes >= 4 && localMouseY > midY + bH) lane = 4;
+            const int prevLane = chain.getLane (dragSourceIndex);
+            const int newLane = juce::jlimit (1, lanes, lane);
+            if (newLane != prevLane)
+                chain.setLane (dragSourceIndex, newLane);
+        }
     }
 
-    // Dragged block follows the mouse
     auto* dragBlock = blocks[dragSourceIndex];
-    // Use mouse position for smooth following
-    float dragY = (float) juce::jlimit (20, blocksContent.getHeight() - bH, localMouseY - bH / 2);
-    float dragX = (float) juce::jlimit (0, cachedContentW - bW, localMouseX - bW / 2);
-    // Smooth follow
+    if (dragBlock == nullptr) return;
+    constexpr float lerpSpeed = 0.40f;
+    const int maxX = juce::jmax (0, blocksContent.getWidth() - bW);
+    const int maxY = juce::jmax (0, blocksContent.getHeight() - bH);
+    float dragY = (float) juce::jlimit (0, maxY, localMouseY - bH / 2);
+    float dragX = (float) juce::jlimit (0, maxX, localMouseX - bW / 2);
     const float curY = (float) dragBlock->getY();
     const float curX = (float) dragBlock->getX();
     dragBlock->setBounds (juce::roundToInt (curX + (dragX - curX) * lerpSpeed),
@@ -1936,61 +2014,172 @@ int MainComponent::getBlockRow (int index) const
 void MainComponent::paintConnectionLines (juce::Graphics& g, const juce::Rectangle<int>&)
 {
     const int n = blocks.size();
-    if (n <= 1) return;
-
     auto& th = Theme::get();
-    const auto lineColour = th.text.withAlpha (0.12f);
-    const auto monoLineColour = th.accent.withAlpha (0.18f);
+    auto& chain = audioEngine.getPluginChain();
 
-    // Use a thin stroke
-    g.setColour (lineColour);
+    const auto cable = th.text.withAlpha (0.45f);
+    const auto rail  = th.text.withAlpha (0.28f);
+    const auto stereoCol = th.text.withAlpha (0.14f);
+    const auto monoCol = th.accent.withAlpha (0.30f);
 
-    for (int i = 0; i < n - 1; ++i)
+    auto midR = [] (PluginBlockComponent* b) {
+        return juce::Point<float> ((float) b->getRight(), (float) (b->getY() + b->getHeight() / 2));
+    };
+    auto midL = [] (PluginBlockComponent* b) {
+        return juce::Point<float> ((float) b->getX(), (float) (b->getY() + b->getHeight() / 2));
+    };
+
+    auto strokeElbow = [&] (juce::Point<float> a, juce::Point<float> b, float thick, juce::Colour c)
     {
-        auto* srcBlock = blocks[i];
-        auto* dstBlock = blocks[i + 1];
-        if (srcBlock == nullptr || dstBlock == nullptr) continue;
-
-        // Skip bypassed plugins — draw a line from last active to next active
-        const bool srcBypassed = audioEngine.getPluginChain().isBypassed (i);
-        const bool dstBypassed = audioEngine.getPluginChain().isBypassed (i + 1);
-
-        // Dim the line if either end is bypassed
-        const float bypassAlpha = (srcBypassed || dstBypassed) ? 0.04f : 1.0f;
-
-        const bool srcMono = audioEngine.getPluginChain().isMono (i);
-        const bool dstMono = audioEngine.getPluginChain().isMono (i + 1);
-
-        // Connection points: right edge of source, left edge of destination
-        const float srcX = (float) (srcBlock->getRight());
-        const float dstX = (float) (dstBlock->getX());
-        const float srcY = (float) (srcBlock->getY() + srcBlock->getHeight() / 2);
-        const float dstY = (float) (dstBlock->getY() + dstBlock->getHeight() / 2);
-
-        // Skip if blocks are in different rows (vertical gap too large)
-        if (std::abs (srcY - dstY) > srcBlock->getHeight() * 1.5f)
-            continue;
-
-        const float stereoSpread = juce::jmin (8.0f, (float) srcBlock->getHeight() * 0.08f);
-
-        // Determine line style based on source/dest mono state
-        // Both stereo: 2 parallel lines
-        // Either mono: 1 line (mono sums to center)
-        const bool isMonoPath = srcMono || dstMono;
-
-        if (isMonoPath)
-        {
-            // Single center line
-            g.setColour (monoLineColour.withMultipliedAlpha (bypassAlpha));
-            g.drawLine (srcX, srcY, dstX, dstY, 1.5f);
-        }
+        g.setColour (c);
+        if (std::abs (a.y - b.y) < 2.0f)
+            g.drawLine (a.x, a.y, b.x, b.y, thick);
         else
         {
-            // Stereo: two parallel lines (L and R)
-            g.setColour (lineColour.withMultipliedAlpha (bypassAlpha));
-            g.drawLine (srcX, srcY - stereoSpread, dstX, dstY - stereoSpread, 1.0f);
-            g.drawLine (srcX, srcY + stereoSpread, dstX, dstY + stereoSpread, 1.0f);
+            const float mx = 0.5f * (a.x + b.x);
+            juce::Path path;
+            path.startNewSubPath (a);
+            path.lineTo (mx, a.y);
+            path.lineTo (mx, b.y);
+            path.lineTo (b);
+            g.strokePath (path, juce::PathStrokeType (thick, juce::PathStrokeType::curved,
+                                                      juce::PathStrokeType::rounded));
         }
+    };
+
+    // ---- Always-on horizontal rails across the full board (L→R) ----
+    // Centre trunk + top/bottom lane tracks, full content width.
+    {
+        const float x0 = 8.0f;
+        const float x1 = (float) juce::jmax (blocksContent.getWidth() - 8, 100);
+        // Estimate track Y from any existing block or centre of content
+        float cy = (float) blocksContent.getHeight() * 0.5f;
+        float track = (float) (cachedBlockH + cachedGap);
+        if (track < 40.0f) track = 80.0f;
+
+        // Prefer actual splitter Y if present
+        for (int i = 0; i < n; ++i)
+        {
+            auto* inst = chain.getPluginInstance (i);
+            if (inst != nullptr && inst->getName() == "Splitter" && blocks[i] != nullptr)
+            {
+                cy = (float) (blocks[i]->getY() + blocks[i]->getHeight() / 2);
+                track = (float) (blocks[i]->getHeight() + cachedGap);
+                break;
+            }
+        }
+        // If we have any block, use its row spacing
+        if (n > 0 && blocks[0] != nullptr && track < 40.0f)
+            track = (float) (blocks[0]->getHeight() + cachedGap);
+
+        g.setColour (rail);
+        // Continuous L→R rails regardless of plugins
+        g.drawLine (x0, cy, x1, cy, 2.0f);             // centre trunk
+        g.drawLine (x0, cy - track, x1, cy - track, 1.8f); // lane A
+        g.drawLine (x0, cy + track, x1, cy + track, 1.8f); // lane B
+    }
+
+    if (n <= 1) return;
+
+    // Classify nodes
+    enum Kind { Trunk, SplitNode, JoinNode, LanePlugin };
+    juce::Array<Kind> kinds; kinds.resize (n);
+    juce::Array<int> laneOf; laneOf.resize (n);
+    int openLanes = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        laneOf.set (i, chain.getLane (i));
+        auto* inst = chain.getPluginInstance (i);
+        if (inst != nullptr && inst->getName() == "Splitter")
+        {
+            bool join = false;
+            if (auto* sp = dynamic_cast<SplitterProcessor*> (inst))
+            {
+                join = sp->getMode() == SplitterProcessor::Mode::Join;
+                if (! join) openLanes = sp->getNumLanesActive();
+            }
+            kinds.set (i, join ? JoinNode : SplitNode);
+            if (join) openLanes = 0;
+        }
+        else if (openLanes > 0 && chain.getLane (i) > 0)
+            kinds.set (i, LanePlugin);
+        else
+            kinds.set (i, Trunk);
+    }
+
+    auto connect = [&] (int a, int b)
+    {
+        if (! juce::isPositiveAndBelow (a, n) || ! juce::isPositiveAndBelow (b, n)) return;
+        auto* sa = blocks[a];
+        auto* sb = blocks[b];
+        if (sa == nullptr || sb == nullptr) return;
+        strokeElbow (midR (sa), midL (sb), 2.6f, cable);
+        // mono/stereo overlay only when same horizontal track
+        if (std::abs (sa->getY() - sb->getY()) <= sa->getHeight() / 2)
+        {
+            const bool monoPath = chain.isMono (a) || chain.isMono (b);
+            const float y = (float) (sa->getY() + sa->getHeight() / 2);
+            const float x0 = (float) sa->getRight();
+            const float x1 = (float) sb->getX();
+            const float spread = juce::jmin (7.0f, (float) sa->getHeight() * 0.08f);
+            if (monoPath) { g.setColour (monoCol); g.drawLine (x0, y, x1, y, 1.5f); }
+            else {
+                g.setColour (stereoCol);
+                g.drawLine (x0, y - spread, x1, y - spread, 1.0f);
+                g.drawLine (x0, y + spread, x1, y + spread, 1.0f);
+            }
+        }
+    };
+
+    // Trunk serial (skip lane plugins)
+    int prev = -1;
+    for (int i = 0; i < n; ++i)
+    {
+        if (kinds[i] == LanePlugin) continue;
+        if (prev >= 0 && !(kinds[prev] == SplitNode && kinds[i] == JoinNode))
+            connect (prev, i);
+
+        if (kinds[i] == SplitNode)
+        {
+            int join = -1;
+            for (int j = i + 1; j < n; ++j)
+            {
+                if (kinds[j] == JoinNode) { join = j; break; }
+                if (kinds[j] == SplitNode) break;
+            }
+
+            int firstL[4] = { -1, -1, -1, -1 };
+            int lastL[4]  = { -1, -1, -1, -1 };
+            for (int j = i + 1; j < n; ++j)
+            {
+                if (kinds[j] == JoinNode || kinds[j] == SplitNode) break;
+                if (kinds[j] != LanePlugin) continue;
+                const int ln = juce::jlimit (0, 3, laneOf[j] - 1);
+                if (firstL[ln] < 0) firstL[ln] = j;
+                lastL[ln] = j;
+            }
+            for (int L = 0; L < 4; ++L)
+                if (firstL[L] >= 0) connect (i, firstL[L]);
+            for (int L = 0; L < 4; ++L)
+            {
+                int p2 = -1;
+                for (int j = i + 1; j < n; ++j)
+                {
+                    if (kinds[j] == JoinNode || kinds[j] == SplitNode) break;
+                    if (kinds[j] != LanePlugin || laneOf[j] - 1 != L) continue;
+                    if (p2 >= 0) connect (p2, j);
+                    p2 = j;
+                }
+            }
+            if (join >= 0)
+            {
+                for (int L = 0; L < 4; ++L)
+                    if (lastL[L] >= 0) connect (lastL[L], join);
+                prev = join;
+                continue;
+            }
+        }
+        prev = i;
     }
 }
 

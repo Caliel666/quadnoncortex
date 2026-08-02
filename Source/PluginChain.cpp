@@ -8,6 +8,7 @@
 #include "NativePlugins/Limiter/LimiterProcessor.h"
 #include "NativePlugins/Denoiser/DenoiserProcessor.h"
 #include "NativePlugins/PitchShifter/PitchShifterProcessor.h"
+#include "NativePlugins/Splitter/SplitterProcessor.h"
 
 static void configureBuses (juce::AudioPluginInstance& inst, double sr, int bs, bool prepared)
 {
@@ -66,6 +67,7 @@ void PluginChain::ensureNativePlugins()
         LimiterProcessor::makeDescription(),
         DenoiserProcessor::makeDescription(),
         PitchShifterProcessor::makeDescription(),
+        SplitterProcessor::makeDescription(),
     };
 
     // Drop previous native entries so we always re-register current set
@@ -209,40 +211,48 @@ void PluginChain::process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
 
     const juce::ScopedLock sl (processLock);
 
-    // Double-check after taking lock (loadState may have swapped under us)
     if (suspended.load())
         return;
 
-    for (auto& s : plugins)
+    const int nSamples = buffer.getNumSamples();
+    const int nCh = buffer.getNumChannels();
+
+    // Ensure lane buffers exist
+    if (laneBuffers.size() < (size_t) SplitterProcessor::kMaxLanes)
+        laneBuffers.resize ((size_t) SplitterProcessor::kMaxLanes);
+    for (auto& lb : laneBuffers)
+        if (lb.getNumSamples() < nSamples || lb.getNumChannels() < 1)
+            lb.setSize (1, nSamples, false, false, true);
+
+    bool inParallel = false;
+    int activeLanes = 2;
+
+    auto processOne = [&] (Slot& s, juce::AudioBuffer<float>& buf)
     {
         if (s.instance == nullptr || s.bypassed)
-            continue;
-
+            return;
         try
         {
-            if (s.mono && buffer.getNumChannels() >= 2)
+            if (s.mono && buf.getNumChannels() >= 2)
             {
-                // Mono mode: sum L+R into ch0, feed identical L+R to plugin,
-                // then take ch0 output and copy to both channels.
-                tempBuffer.setSize (2, buffer.getNumSamples(), false, false, true);
-                for (int i = 0; i < buffer.getNumSamples(); ++i)
+                tempBuffer.setSize (2, nSamples, false, false, true);
+                for (int i = 0; i < nSamples; ++i)
                 {
-                    const float sum = (buffer.getSample (0, i) + buffer.getSample (1, i)) * 0.5f;
+                    const float sum = (buf.getSample (0, i) + buf.getSample (1, i)) * 0.5f;
                     tempBuffer.setSample (0, i, sum);
                     tempBuffer.setSample (1, i, sum);
                 }
                 s.instance->processBlock (tempBuffer, midi);
-                // Copy mono output (ch0) to both channels
-                buffer.copyFrom (0, 0, tempBuffer, 0, 0, buffer.getNumSamples());
-                buffer.copyFrom (1, 0, tempBuffer, 0, 0, buffer.getNumSamples());
+                buf.copyFrom (0, 0, tempBuffer, 0, 0, nSamples);
+                if (buf.getNumChannels() > 1)
+                    buf.copyFrom (1, 0, tempBuffer, 0, 0, nSamples);
             }
             else
             {
                 const int outCh = s.instance->getTotalNumOutputChannels();
-                s.instance->processBlock (buffer, midi);
-
-                if (outCh == 1 && buffer.getNumChannels() >= 2)
-                    buffer.copyFrom (1, 0, buffer, 0, 0, buffer.getNumSamples());
+                s.instance->processBlock (buf, midi);
+                if (outCh == 1 && buf.getNumChannels() >= 2)
+                    buf.copyFrom (1, 0, buf, 0, 0, nSamples);
             }
         }
         catch (...)
@@ -250,8 +260,85 @@ void PluginChain::process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
             s.bypassed = true;
             DevLog::log ("PluginChain::process EXCEPTION — plugin auto-bypassed");
         }
+    };
+
+    for (size_t i = 0; i < plugins.size(); ++i)
+    {
+        auto& s = plugins[i];
+        if (s.instance == nullptr)
+            continue;
+
+        if (auto* sp = dynamic_cast<SplitterProcessor*> (s.instance.get()))
+        {
+            if (s.bypassed)
+                continue;
+
+            if (sp->getMode() == SplitterProcessor::Mode::Split)
+            {
+                activeLanes = sp->getNumLanesActive();
+                sp->splitToLanes (buffer, laneBuffers, nSamples);
+                inParallel = true;
+            }
+            else // Join
+            {
+                juce::AudioBuffer<float> joined (juce::jmax (2, nCh), nSamples);
+                joined.clear();
+                sp->joinFromLanes (laneBuffers, joined, nSamples);
+                for (int c = 0; c < nCh; ++c)
+                    buffer.copyFrom (c, 0, joined, juce::jmin (c, joined.getNumChannels() - 1), 0, nSamples);
+                inParallel = false;
+            }
+            continue;
+        }
+
+        if (s.bypassed)
+            continue;
+
+        if (inParallel && s.lane > 0)
+        {
+            const int li = juce::jlimit (0, activeLanes - 1, s.lane - 1);
+            auto& lb = laneBuffers[(size_t) li];
+            // Process mono lane: expand to stereo temp for plugins that want 2 ch
+            tempBuffer.setSize (2, nSamples, false, false, true);
+            tempBuffer.copyFrom (0, 0, lb, 0, 0, nSamples);
+            tempBuffer.copyFrom (1, 0, lb, 0, 0, nSamples);
+            try
+            {
+                s.instance->processBlock (tempBuffer, midi);
+                lb.copyFrom (0, 0, tempBuffer, 0, 0, nSamples);
+            }
+            catch (...)
+            {
+                s.bypassed = true;
+                DevLog::log ("PluginChain::process lane EXCEPTION — auto-bypassed");
+            }
+        }
+        else
+        {
+            processOne (s, buffer);
+        }
     }
 }
+
+int PluginChain::getSplitOwner (int index) const
+{
+    // Walk backward for nearest Split without a Join in between
+    int owner = -1;
+    for (int i = 0; i <= index && i < (int) plugins.size(); ++i)
+    {
+        auto* inst = plugins[(size_t) i].instance.get();
+        if (auto* sp = dynamic_cast<SplitterProcessor*> (inst))
+        {
+            if (sp->getMode() == SplitterProcessor::Mode::Split)
+                owner = i;
+            else
+                owner = -1;
+        }
+    }
+    return owner;
+}
+
+
 
 
 static std::unique_ptr<juce::AudioPluginInstance> createNativeInstance (
@@ -304,6 +391,11 @@ static std::unique_ptr<juce::AudioPluginInstance> createNativeInstance (
         || desc.name == PitchShifterProcessor::kName)
         return prepare (std::make_unique<PitchShifterProcessor>());
 
+    if (desc.fileOrIdentifier == SplitterProcessor::kId
+        || desc.uniqueId == SplitterProcessor::kUid
+        || desc.name == SplitterProcessor::kName)
+        return prepare (std::make_unique<SplitterProcessor>());
+
     return nullptr;
 }
 
@@ -349,7 +441,43 @@ int PluginChain::addPlugin (const juce::PluginDescription& desc, juce::String& e
     {
         const juce::ScopedLock sl (processLock);
         index = (int) plugins.size();
-        plugins.push_back (std::move (slot));
+        
+    // Auto-assign lane if currently inside a Split region (no Join yet)
+    {
+        int owner = -1;
+        int lanes = 2;
+        for (size_t i = 0; i < plugins.size(); ++i)
+        {
+            if (auto* sp = dynamic_cast<SplitterProcessor*> (plugins[i].instance.get()))
+            {
+                if (sp->getMode() == SplitterProcessor::Mode::Split)
+                {
+                    owner = (int) i;
+                    lanes = sp->getNumLanesActive();
+                }
+                else
+                    owner = -1;
+            }
+        }
+        if (owner >= 0)
+        {
+            // Alternate lanes for successive plugins
+            int counts[SplitterProcessor::kMaxLanes] = {};
+            for (size_t i = (size_t) owner + 1; i < plugins.size(); ++i)
+            {
+                const int ln = plugins[i].lane;
+                if (ln >= 1 && ln <= lanes)
+                    counts[ln - 1]++;
+            }
+            int best = 1, bestC = counts[0];
+            for (int L = 1; L < lanes; ++L)
+                if (counts[L] < bestC) { bestC = counts[L]; best = L + 1; }
+            slot.lane = best;
+            slot.mono = true; // parallel path is mono per side
+        }
+    }
+
+    plugins.push_back (std::move (slot));
     }
     return index;
 }
@@ -447,6 +575,7 @@ void PluginChain::saveState (juce::XmlElement& parent) const
         pluginXml->setAttribute ("name", p->getName());
         pluginXml->setAttribute ("bypassed", plugins[i].bypassed ? 1 : 0);
         pluginXml->setAttribute ("mono", plugins[i].mono ? 1 : 0);
+        pluginXml->setAttribute ("lane", plugins[i].lane);
         pluginXml->setAttribute ("colour", (int) plugins[i].colour.getARGB());
         juce::PluginDescription desc;
         p->fillInPluginDescription (desc);
@@ -541,6 +670,7 @@ void PluginChain::loadState (const juce::XmlElement& parent)
             auto* pluginXml = presetPlugins[i];
             slot.bypassed = pluginXml->getBoolAttribute ("bypassed");
             slot.mono = pluginXml->getBoolAttribute ("mono");
+            slot.lane = pluginXml->getIntAttribute ("lane", 0);
             if (pluginXml->hasAttribute ("colour"))
                 slot.colour = juce::Colour ((juce::uint32) pluginXml->getIntAttribute ("colour"));
 
@@ -674,6 +804,7 @@ void PluginChain::loadState (const juce::XmlElement& parent)
                         {
                             plugins[(size_t) idx].bypassed = pluginXml->getBoolAttribute ("bypassed");
                             plugins[(size_t) idx].mono = pluginXml->getBoolAttribute ("mono");
+                            plugins[(size_t) idx].lane = pluginXml->getIntAttribute ("lane", 0);
                             // Keep suspended slots silent until fully configured
                             if (pluginXml->hasAttribute ("colour"))
                                 plugins[(size_t) idx].colour =

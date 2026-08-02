@@ -68,6 +68,7 @@ target_sources(quadnoncortex
         Source/NativePlugins/Limiter/LimiterProcessor.cpp
         Source/NativePlugins/Denoiser/DenoiserProcessor.cpp
         Source/NativePlugins/PitchShifter/PitchShifterProcessor.cpp
+        Source/NativePlugins/Splitter/SplitterProcessor.cpp
 )
 
 # ---- Platform audio backends ----

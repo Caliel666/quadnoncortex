@@ -67,6 +67,23 @@ public:
 
     void toggleMono (int index) { setMono (index, ! isMono (index)); }
 
+    int getLane (int index) const
+    {
+        if (juce::isPositiveAndBelow (index, plugins.size()))
+            return plugins[(size_t) index].lane;
+        return 0;
+    }
+
+    void setLane (int index, int lane)
+    {
+        const juce::ScopedLock sl (processLock);
+        if (juce::isPositiveAndBelow (index, plugins.size()))
+            plugins[(size_t) index].lane = juce::jmax (0, lane);
+    }
+
+    /** 0 = not in parallel region; else split index that owns this region. */
+    int getSplitOwner (int index) const;
+
     juce::Colour getBlockColour (int index) const
     {
         if (juce::isPositiveAndBelow (index, plugins.size()))
@@ -111,6 +128,7 @@ private:
         bool bypassed = false;
         bool mono = false;   // true = mono output wiring, false = stereo (default)
         juce::Colour colour { 0xff3a7ca5 };
+        int lane = 0; // 0 = trunk; 1..N = parallel lane inside a split region
     };
 
     struct SpareInstance
@@ -133,6 +151,7 @@ private:
     int    currentBlockSize  = 512;
     bool   prepared          = false;
     juce::AudioBuffer<float> tempBuffer;
+    std::vector<juce::AudioBuffer<float>> laneBuffers;
     juce::CriticalSection processLock;
     std::atomic<bool> suspended { false };
     juce::Array<int> pendingRemoves;
