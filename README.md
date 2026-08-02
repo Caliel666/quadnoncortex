@@ -22,14 +22,14 @@ honestly i tried, but i did not like any of the other hosts interfaces, the only
 ## Requirements
 
 ### All platforms
-- [JUCE 9](https://github.com/juce-framework/JUCE) (pass `-DJUCE_PATH=` or place next to this folder)
+- [JUCE 9](https://github.com/juce-framework/JUCE) (pass `-DJUCE_PATH=`) or use the one in the repo
 - CMake 3.22+
-- Git (for FetchContent of NeuralAmpModelerCore)
+- Git
 
 ### Windows
 - Windows 10/11 x64
 - MSVC Build Tools 2022 (or Visual Studio 2022)
-- Optional: [ASIO SDK](https://www.steinberg.net/asiosdk/) via `-DASIO_SDK_PATH=`
+- Optional: [ASIO SDK](https://github.com/audiosdk/asio) via `-DASIO_SDK_PATH=`
 
 ### Linux (Debian / Ubuntu / Raspberry Pi OS)
 ```bash
