@@ -1,0 +1,159 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  JUCE_GIT: https://github.com/juce-framework/JUCE.git
+  # Pin a known-good JUCE tag if needed; "master" tracks current
+  JUCE_REF: master
+
+jobs:
+  windows-x64:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout JUCE
+        uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          ref: ${{ env.JUCE_REF }}
+          path: JUCE
+
+      - name: Configure
+        run: |
+          cmake -B build -G "Visual Studio 17 2022" -A x64 `
+            -DJUCE_PATH="${{ github.workspace }}/JUCE" `
+            -DQUADNONCORTEX_FETCH_NAM=ON
+
+      - name: Build Release
+        run: cmake --build build --config Release --parallel
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $src = Get-ChildItem -Recurse -Filter quadnoncortex.exe |
+            Where-Object { $_.FullName -match 'Release' } |
+            Select-Object -First 1
+          if (-not $src) { throw "quadnoncortex.exe (Release) not found" }
+          Copy-Item $src.FullName dist/
+          Copy-Item README.md dist/ -ErrorAction SilentlyContinue
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quadnoncortex-windows-x64
+          path: dist/
+          if-no-files-found: error
+
+  linux-x64:
+    name: Linux x64 (Debian)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config git \
+            libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxcomposite-dev libxi-dev \
+            libgl1-mesa-dev \
+            libasound2-dev libjack-jackd2-dev \
+            libcurl4-openssl-dev
+
+      - name: Checkout JUCE
+        uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          ref: ${{ env.JUCE_REF }}
+          path: JUCE
+
+      - name: Configure
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+            -DJUCE_PATH="${{ github.workspace }}/JUCE" \
+            -DQUADNONCORTEX_FETCH_NAM=ON
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Stage artifact
+        run: |
+          mkdir -p dist
+          BIN=$(find build -type f -name quadnoncortex -executable | head -1)
+          test -n "$BIN" || { echo "binary not found"; find build -name 'quadnoncortex*' ; exit 1; }
+          cp "$BIN" dist/
+          cp README.md dist/ || true
+          chmod +x dist/quadnoncortex
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quadnoncortex-linux-x64
+          path: dist/
+          if-no-files-found: error
+
+  linux-arm64:
+    name: Linux ARM64 (Debian via QEMU)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Build in Debian arm64 container
+        uses: uraimo/run-on-arch-action@v2
+        with:
+          arch: aarch64
+          distro: bookworm
+          githubToken: ${{ github.token }}
+          dockerRunArgs: |
+            --volume "${{ github.workspace }}:/work"
+          shell: /bin/bash
+          install: |
+            apt-get update
+            apt-get install -y \
+              build-essential cmake pkg-config git ca-certificates \
+              libfreetype-dev libfontconfig1-dev \
+              libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
+              libxcursor-dev libxcomposite-dev libxi-dev \
+              libgl1-mesa-dev \
+              libasound2-dev libjack-jackd2-dev \
+              libcurl4-openssl-dev
+          run: |
+            set -e
+            cd /work
+            if [ ! -d JUCE/.git ]; then
+              git clone --depth 1 https://github.com/juce-framework/JUCE.git JUCE
+            fi
+            cmake -B build-arm -DCMAKE_BUILD_TYPE=Release \
+              -DJUCE_PATH=/work/JUCE \
+              -DQUADNONCORTEX_FETCH_NAM=ON
+            cmake --build build-arm -j$(nproc)
+            mkdir -p dist-arm
+            BIN=$(find build-arm -type f -name quadnoncortex -executable | head -1)
+            test -n "$BIN"
+            cp "$BIN" dist-arm/
+            cp README.md dist-arm/ || true
+            chmod +x dist-arm/quadnoncortex
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quadnoncortex-linux-arm64
+          path: dist-arm/
+          if-no-files-found: error

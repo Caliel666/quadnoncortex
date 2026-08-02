@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(quadnoncortex VERSION 1.1.1)
+project(quadnoncortex VERSION 1.1.2)
 
 # Multi-config (VS): add Dev = RelWithDebInfo + QUADNONCORTEX_DEV
 if (CMAKE_CONFIGURATION_TYPES)
@@ -25,7 +25,7 @@ juce_add_gui_app(quadnoncortex
     PRODUCT_NAME "quadnoncortex"
     COMPANY_NAME "quadnoncortex"
     BUNDLE_ID    "com.quadnoncortex.app"
-    VERSION      "1.1.1"
+    VERSION      "1.1.2"
     NEEDS_CURL   TRUE
     NEEDS_WEB_BROWSER FALSE
 )
@@ -69,6 +69,42 @@ target_sources(quadnoncortex
         Source/NativePlugins/Denoiser/DenoiserProcessor.cpp
 )
 
+# ---- Platform audio backends ----
+# Windows: ASIO + WASAPI
+# macOS:   CoreAudio (JUCE default; no extra flags)
+# Linux:   ALSA + JACK  (PipeWire via pipewire-alsa / pipewire-jack)
+if (WIN32)
+    set (QNC_AUDIO_DEFS
+        JUCE_ASIO=1
+        JUCE_WASAPI=1
+        JUCE_DIRECTSOUND=0
+        JUCE_ALSA=0
+        JUCE_JACK=0
+    )
+    # Optional: -DASIO_SDK_PATH=/path/to/asiosdk  (JUCE looks for common locations too)
+    if (DEFINED ASIO_SDK_PATH AND EXISTS "${ASIO_SDK_PATH}/common/asio.h")
+        target_include_directories (quadnoncortex PRIVATE "${ASIO_SDK_PATH}/common")
+        message (STATUS "ASIO SDK: ${ASIO_SDK_PATH}")
+    endif()
+elseif (APPLE)
+    set (QNC_AUDIO_DEFS
+        JUCE_ASIO=0
+        JUCE_WASAPI=0
+        JUCE_DIRECTSOUND=0
+        JUCE_ALSA=0
+        JUCE_JACK=0
+    )
+else()
+    # Linux / BSD / other Unix
+    set (QNC_AUDIO_DEFS
+        JUCE_ASIO=0
+        JUCE_WASAPI=0
+        JUCE_DIRECTSOUND=0
+        JUCE_ALSA=1
+        JUCE_JACK=1
+    )
+endif()
+
 target_compile_definitions(quadnoncortex
     PRIVATE
         JUCE_WEB_BROWSER=0
@@ -81,16 +117,40 @@ target_compile_definitions(quadnoncortex
         JUCE_PLUGINHOST_AU=0
         JUCE_PLUGINHOST_LADSPA=0
         JUCE_PLUGINHOST_LV2=0
-        JUCE_ASIO=1
-        JUCE_WASAPI=1
-        JUCE_DIRECTSOUND=0
-        JUCE_ALSA=1
-        JUCE_JACK=0
         JUCE_DISPLAY_SPLASH_SCREEN=0
         JUCE_REPORT_APP_USAGE=0
+        ${QNC_AUDIO_DEFS}
         $<$<CONFIG:Dev>:QUADNONCORTEX_DEV=1>
         $<$<CONFIG:Debug>:QUADNONCORTEX_DEV=1>
 )
+
+# Linux system libs (ALSA/JACK resolved by JUCE modules; ensure pthread/dl/curl)
+if (UNIX AND NOT APPLE)
+    find_package (PkgConfig QUIET)
+    if (PkgConfig_FOUND)
+        pkg_check_modules (JACK QUIET jack)
+        pkg_check_modules (ALSA QUIET alsa)
+        if (JACK_FOUND)
+            message (STATUS "JACK found — ${JACK_LIBRARIES}")
+            target_link_libraries (quadnoncortex PRIVATE ${JACK_LIBRARIES})
+            target_include_directories (quadnoncortex PRIVATE ${JACK_INCLUDE_DIRS})
+        else()
+            message (WARNING "JACK not found (pkg-config). Install libjack-dev or pipewire-jack-devel for JACK/PipeWire-JACK.")
+        endif()
+        if (ALSA_FOUND)
+            message (STATUS "ALSA found — ${ALSA_LIBRARIES}")
+            target_link_libraries (quadnoncortex PRIVATE ${ALSA_LIBRARIES})
+            target_include_directories (quadnoncortex PRIVATE ${ALSA_INCLUDE_DIRS})
+        else()
+            message (WARNING "ALSA not found. Install libasound2-dev (PipeWire users: pipewire-alsa).")
+        endif()
+    endif()
+    find_package (CURL)
+    if (CURL_FOUND)
+        target_link_libraries (quadnoncortex PRIVATE CURL::libcurl)
+    endif()
+    target_link_libraries (quadnoncortex PRIVATE pthread dl)
+endif()
 
 
 # ---- Native NAM (NeuralAmpModelerCore) ----

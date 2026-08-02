@@ -132,9 +132,21 @@ juce::FileSearchPath PluginChain::getDefaultVST3Paths()
     paths.add (juce::File ("/Library/Audio/Plug-Ins/VST3"));
     paths.add (juce::File ("~/Library/Audio/Plug-Ins/VST3"));
    #else
+    // Linux / generic Unix — multi-arch + user dirs (PipeWire/desktop installs)
     paths.add (juce::File ("/usr/lib/vst3"));
+    paths.add (juce::File ("/usr/lib/x86_64-linux-gnu/vst3"));
+    paths.add (juce::File ("/usr/lib/aarch64-linux-gnu/vst3"));
+    paths.add (juce::File ("/usr/lib/arm-linux-gnueabihf/vst3"));
     paths.add (juce::File ("/usr/local/lib/vst3"));
+    paths.add (juce::File ("/usr/local/lib/x86_64-linux-gnu/vst3"));
+    paths.add (juce::File ("/usr/local/lib/aarch64-linux-gnu/vst3"));
     paths.add (juce::File ("~/.vst3"));
+    paths.add (juce::File ("~/.local/lib/vst3"));
+    {
+        const auto home = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
+        paths.add (home.getChildFile (".vst3"));
+        paths.add (home.getChildFile (".local/lib/vst3"));
+    }
    #endif
     return paths;
 }

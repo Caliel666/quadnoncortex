@@ -383,7 +383,7 @@ void NativeNamProcessor::clearModel (Slot slot)
 {
     if (slot == Slot::Cab)
     {
-        cabPath = {};
+        cabPath = juce::File();
         cabName = {};
         cabLoaded = false;
         cabConv.reset();
@@ -395,7 +395,7 @@ void NativeNamProcessor::clearModel (Slot slot)
        #if QUADNONCORTEX_HAS_NAM
         s.dsp.reset();
        #endif
-        s.path = {};
+        s.path = juce::File();
         s.name = {};
     }
     if (onModelsChanged) onModelsChanged();
