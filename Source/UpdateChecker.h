@@ -301,7 +301,7 @@ public:
                 return "No binary found inside the zip.";
             }
 
-            if (zip.uncompressEntry (best, tempExtractDir, true) == nullptr)
+            if (zip.uncompressEntry (best, tempExtractDir, true).failed())
             {
                 tempDownload.deleteFile();
                 tempExtractDir.deleteRecursively();
