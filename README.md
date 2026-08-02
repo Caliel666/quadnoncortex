@@ -12,6 +12,7 @@ includes native effects:
 - Reverb
 - Limiter
 - ParametricEQ
+- Pitchshifter by [VoLum](https://github.com/guitarlum/VoLum)
 - more to come +
 
 supports midi devices for toggle switching

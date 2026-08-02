@@ -7,6 +7,7 @@
 #include "NativePlugins/Compressor/CompressorProcessor.h"
 #include "NativePlugins/Limiter/LimiterProcessor.h"
 #include "NativePlugins/Denoiser/DenoiserProcessor.h"
+#include "NativePlugins/PitchShifter/PitchShifterProcessor.h"
 
 static void configureBuses (juce::AudioPluginInstance& inst, double sr, int bs, bool prepared)
 {
@@ -64,6 +65,7 @@ void PluginChain::ensureNativePlugins()
         CompressorProcessor::makeDescription(),
         LimiterProcessor::makeDescription(),
         DenoiserProcessor::makeDescription(),
+        PitchShifterProcessor::makeDescription(),
     };
 
     // Drop previous native entries so we always re-register current set
@@ -296,6 +298,11 @@ static std::unique_ptr<juce::AudioPluginInstance> createNativeInstance (
         || desc.uniqueId == DenoiserProcessor::kUid
         || desc.name == DenoiserProcessor::kName)
         return prepare (std::make_unique<DenoiserProcessor>());
+
+    if (desc.fileOrIdentifier == PitchShifterProcessor::kId
+        || desc.uniqueId == PitchShifterProcessor::kUid
+        || desc.name == PitchShifterProcessor::kName)
+        return prepare (std::make_unique<PitchShifterProcessor>());
 
     return nullptr;
 }
