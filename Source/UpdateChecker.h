@@ -1,13 +1,21 @@
 #pragma once
 #include <JuceHeader.h>
 
-/** Check GitHub releases and install Windows builds next to the running exe. */
+/**
+ * Check GitHub releases, download the matching OS/arch zip, extract the
+ * binary next to the running executable, and schedule a restart.
+ *
+ * Expected release assets (as produced by CI):
+ *   quadnoncortex-windows-x64.zip
+ *   quadnoncortex-linux-x64.zip
+ *   quadnoncortex-linux-arm64.zip
+ */
 class UpdateChecker
 {
 public:
     static constexpr const char* kRepoApi =
         "https://api.github.com/repos/Caliel666/quadnoncortex/releases/latest";
-    /** App version from CMake project VERSION (QUADNONCORTEX_VERSION / JUCE). */
+
     static juce::String currentVersion()
     {
        #if defined (QUADNONCORTEX_VERSION)
@@ -15,7 +23,7 @@ public:
        #elif defined (JUCE_APPLICATION_VERSION_STRING)
         return juce::String (JUCE_APPLICATION_VERSION_STRING);
        #else
-        return "1.0.2";
+        return "1.1.1";
        #endif
     }
 
@@ -53,14 +61,52 @@ public:
         return 0;
     }
 
+    /** Asset name substring for this build (order = preference). */
+    static juce::StringArray preferredAssetTokens()
+    {
+        juce::StringArray tokens;
+       #if JUCE_WINDOWS
+        tokens.add ("windows-x64");
+        tokens.add ("windows");
+        tokens.add (".exe");
+       #elif JUCE_MAC
+        tokens.add ("macos");
+        tokens.add ("darwin");
+        tokens.add (".dmg");
+        tokens.add (".pkg");
+       #else
+        // Linux — distinguish arm64 vs x64
+        #if defined (__aarch64__) || defined (_M_ARM64)
+        tokens.add ("linux-arm64");
+        tokens.add ("aarch64");
+        tokens.add ("arm64");
+        #else
+        tokens.add ("linux-x64");
+        tokens.add ("linux-amd64");
+        tokens.add ("x86_64");
+        #endif
+        tokens.add ("linux");
+        tokens.add (".AppImage");
+       #endif
+        return tokens;
+    }
+
+    static bool assetMatches (const juce::String& name, const juce::StringArray& tokens)
+    {
+        for (const auto& t : tokens)
+            if (name.containsIgnoreCase (t))
+                return true;
+        return false;
+    }
+
     static Result checkForUpdate()
     {
         Result r;
         juce::URL url (kRepoApi);
-        // GitHub API wants a User-Agent
         auto opts = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
                         .withHttpRequestCmd ("GET")
-                        .withExtraHeaders ("User-Agent: quadnoncortex/" + currentVersion() + "\r\nAccept: application/vnd.github+json\r\n")
+                        .withExtraHeaders ("User-Agent: quadnoncortex/" + currentVersion()
+                                           + "\r\nAccept: application/vnd.github+json\r\n")
                         .withConnectionTimeoutMs (12000);
 
         std::unique_ptr<juce::InputStream> stream (url.createInputStream (opts));
@@ -71,25 +117,26 @@ public:
         }
 
         const auto body = stream->readEntireStreamAsString();
-        if (body.isEmpty() || body.contains ("\"message\": \"Not Found\""))
+        if (body.isEmpty() || body.containsIgnoreCase ("\"message\": \"Not Found\""))
         {
-            r.ok = true;
-            r.message = "No releases published yet.";
+            r.message = "No releases found on GitHub yet.";
             return r;
         }
 
-        auto json = juce::JSON::parse (body);
-        if (auto* obj = json.getDynamicObject())
+        auto parsed = juce::JSON::parse (body);
+        if (auto* obj = parsed.getDynamicObject())
         {
+            r.ok = true;
             r.latestTag = obj->getProperty ("tag_name").toString();
             if (r.latestTag.isEmpty())
+                r.latestTag = obj->getProperty ("name").toString();
+
+            if (r.latestTag.isEmpty())
             {
-                r.message = "No release tags found.";
-                r.ok = true;
+                r.message = "Could not read release tag.";
                 return r;
             }
 
-            r.ok = true;
             if (compareVersions (currentVersion(), r.latestTag) >= 0)
             {
                 r.updateAvailable = false;
@@ -100,43 +147,55 @@ public:
             r.updateAvailable = true;
             r.message = "Update available: " + r.latestTag + " (current " + currentVersion() + ")";
 
-           #if JUCE_WINDOWS
-            const juce::String prefer = ".exe";
-           #elif JUCE_MAC
-            const juce::String prefer = ".dmg";
-           #else
-            const juce::String prefer = ".AppImage";
-           #endif
-
+            const auto prefer = preferredAssetTokens();
             if (auto* assets = obj->getProperty ("assets").getArray())
             {
-                for (auto& a : *assets)
+                // First pass: preferred tokens
+                for (const auto& token : prefer)
                 {
-                    if (auto* ao = a.getDynamicObject())
+                    for (auto& a : *assets)
                     {
-                        const auto name = ao->getProperty ("name").toString();
-                        const auto dl = ao->getProperty ("browser_download_url").toString();
-                        if (name.containsIgnoreCase (prefer) && dl.isNotEmpty())
+                        if (auto* ao = a.getDynamicObject())
                         {
-                            r.assetName = name;
-                            r.downloadUrl = dl;
-                            break;
+                            const auto name = ao->getProperty ("name").toString();
+                            const auto dl = ao->getProperty ("browser_download_url").toString();
+                            if (name.containsIgnoreCase (token) && dl.isNotEmpty())
+                            {
+                                r.assetName = name;
+                                r.downloadUrl = dl;
+                                break;
+                            }
                         }
                     }
+                    if (r.downloadUrl.isNotEmpty())
+                        break;
                 }
-                // Fallback: first asset
-                if (r.downloadUrl.isEmpty() && ! assets->isEmpty())
+
+                // Fallback: first zip/exe
+                if (r.downloadUrl.isEmpty())
                 {
-                    if (auto* ao = assets->getFirst().getDynamicObject())
+                    for (auto& a : *assets)
                     {
-                        r.assetName = ao->getProperty ("name").toString();
-                        r.downloadUrl = ao->getProperty ("browser_download_url").toString();
+                        if (auto* ao = a.getDynamicObject())
+                        {
+                            const auto name = ao->getProperty ("name").toString();
+                            const auto dl = ao->getProperty ("browser_download_url").toString();
+                            if (dl.isNotEmpty()
+                                && (name.endsWithIgnoreCase (".zip")
+                                    || name.endsWithIgnoreCase (".exe")
+                                    || ! name.contains (".")))
+                            {
+                                r.assetName = name;
+                                r.downloadUrl = dl;
+                                break;
+                            }
+                        }
                     }
                 }
             }
 
             if (r.downloadUrl.isEmpty())
-                r.message += " — no downloadable asset for this OS yet.";
+                r.message += " — no downloadable asset for this OS/arch.";
         }
         else
         {
@@ -145,50 +204,193 @@ public:
         return r;
     }
 
-    /** Download to temp and schedule Windows replace + restart. */
-    static juce::String installWindowsUpdate (const juce::String& downloadUrl, const juce::String& assetName)
+    /**
+     * Download the release asset, extract the app binary if it's a zip,
+     * replace the running executable, and relaunch.
+     * Returns empty string on success (caller should quit), or an error message.
+     */
+    static juce::String installUpdate (const juce::String& downloadUrl, const juce::String& assetName)
     {
-       #if ! JUCE_WINDOWS
-        juce::ignoreUnused (downloadUrl, assetName);
-        return "Auto-update is only supported on Windows.";
-       #else
         if (downloadUrl.isEmpty())
             return "No download URL.";
 
         const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
         const auto dir = exe.getParentDirectory();
-        const auto tempExe = dir.getChildFile ("_update_download.exe");
-        const auto bat = dir.getChildFile ("_apply_update.bat");
+        const auto tempDownload = dir.getChildFile ("_update_download.bin");
+        const auto tempExtractDir = dir.getChildFile ("_update_extract");
+        const auto stagedBinary = dir.getChildFile (
+           #if JUCE_WINDOWS
+            "_update_new.exe"
+           #else
+            "_update_new"
+           #endif
+        );
 
-        juce::URL url (downloadUrl);
-        auto opts = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
-                        .withHttpRequestCmd ("GET")
-                        .withExtraHeaders ("User-Agent: quadnoncortex/" + currentVersion() + "\r\n")
-                        .withConnectionTimeoutMs (60000);
-
-        std::unique_ptr<juce::InputStream> in (url.createInputStream (opts));
-        if (in == nullptr)
-            return "Download failed.";
-
-        tempExe.deleteFile();
-        std::unique_ptr<juce::FileOutputStream> out (tempExe.createOutputStream());
-        if (out == nullptr || ! out->openedOk())
-            return "Could not write temporary file.";
-
-        out->writeFromInputStream (*in, -1);
-        out.reset();
-
-        if (tempExe.getSize() < 10000)
+        // --- download ---
         {
-            tempExe.deleteFile();
-            return "Downloaded file looks invalid.";
+            juce::URL url (downloadUrl);
+            auto opts = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
+                            .withHttpRequestCmd ("GET")
+                            .withExtraHeaders ("User-Agent: quadnoncortex/" + currentVersion() + "\r\n")
+                            .withConnectionTimeoutMs (120000);
+
+            std::unique_ptr<juce::InputStream> in (url.createInputStream (opts));
+            if (in == nullptr)
+                return "Download failed.";
+
+            tempDownload.deleteFile();
+            std::unique_ptr<juce::FileOutputStream> out (tempDownload.createOutputStream());
+            if (out == nullptr || ! out->openedOk())
+                return "Could not write temporary download.";
+
+            out->writeFromInputStream (*in, -1);
+            out.reset();
+
+            if (tempDownload.getSize() < 10000)
+            {
+                tempDownload.deleteFile();
+                return "Downloaded file looks invalid (too small).";
+            }
         }
 
-        // Batch: wait for this process to exit, replace exe, relaunch, clean up
-        const auto exePath = exe.getFullPathName();
-        const auto tempPath = tempExe.getFullPathName();
-        const auto batPath = bat.getFullPathName();
+        // --- resolve binary (zip extract or raw) ---
+        stagedBinary.deleteFile();
+        const bool isZip = assetName.endsWithIgnoreCase (".zip")
+                        || tempDownload.getFileExtension().equalsIgnoreCase (".zip");
 
+        if (isZip || looksLikeZip (tempDownload))
+        {
+            tempExtractDir.deleteRecursively();
+            tempExtractDir.createDirectory();
+
+            juce::ZipFile zip (tempDownload);
+            if (zip.getNumEntries() <= 0)
+            {
+                tempDownload.deleteFile();
+                return "Zip archive is empty or invalid.";
+            }
+
+            // Prefer a file named like the current exe, else first executable-looking entry
+            const auto exeName = exe.getFileName();
+            int best = -1;
+            for (int i = 0; i < zip.getNumEntries(); ++i)
+            {
+                if (auto* e = zip.getEntry (i))
+                {
+                    if (e->isSymbolicLink)
+                        continue;
+                    const auto n = e->filename.fromLastOccurrenceOf ("/", false, false)
+                                              .fromLastOccurrenceOf ("\\", false, false);
+                    if (n.isEmpty() || n.endsWithChar ('/'))
+                        continue;
+                    if (n.equalsIgnoreCase (exeName) || n.equalsIgnoreCase ("quadnoncortex")
+                        || n.equalsIgnoreCase ("quadnoncortex.exe"))
+                    {
+                        best = i;
+                        break;
+                    }
+                    if (best < 0)
+                        best = i;
+                }
+            }
+
+            if (best < 0)
+            {
+                tempDownload.deleteFile();
+                tempExtractDir.deleteRecursively();
+                return "No binary found inside the zip.";
+            }
+
+            if (zip.uncompressEntry (best, tempExtractDir, true) == nullptr)
+            {
+                tempDownload.deleteFile();
+                tempExtractDir.deleteRecursively();
+                return "Failed to extract binary from zip.";
+            }
+
+            // Find extracted file (may be nested one level)
+            juce::Array<juce::File> found;
+            tempExtractDir.findChildFiles (found, juce::File::findFiles, true);
+            juce::File extracted;
+            for (auto& f : found)
+            {
+                if (f.getFileName().equalsIgnoreCase (exeName)
+                    || f.getFileName().equalsIgnoreCase ("quadnoncortex")
+                    || f.getFileName().equalsIgnoreCase ("quadnoncortex.exe"))
+                {
+                    extracted = f;
+                    break;
+                }
+            }
+            if (extracted == juce::File() && ! found.isEmpty())
+                extracted = found.getFirst();
+
+            if (! extracted.existsAsFile())
+            {
+                tempDownload.deleteFile();
+                tempExtractDir.deleteRecursively();
+                return "Extracted file missing.";
+            }
+
+            if (! extracted.copyFileTo (stagedBinary))
+            {
+                tempDownload.deleteFile();
+                tempExtractDir.deleteRecursively();
+                return "Could not stage new binary.";
+            }
+            tempExtractDir.deleteRecursively();
+        }
+        else
+        {
+            // Raw binary (e.g. bare .exe asset)
+            if (! tempDownload.moveFileTo (stagedBinary)
+                && ! tempDownload.copyFileTo (stagedBinary))
+            {
+                tempDownload.deleteFile();
+                return "Could not stage downloaded binary.";
+            }
+        }
+
+        tempDownload.deleteFile();
+
+        if (stagedBinary.getSize() < 10000)
+        {
+            stagedBinary.deleteFile();
+            return "Staged binary looks invalid.";
+        }
+
+       #if ! JUCE_WINDOWS
+        stagedBinary.setExecutePermission (true);
+       #endif
+
+        // --- schedule replace + relaunch after this process exits ---
+        return scheduleReplaceAndRelaunch (exe, stagedBinary);
+    }
+
+    /** Back-compat name used by older Settings UI. */
+    static juce::String installWindowsUpdate (const juce::String& downloadUrl, const juce::String& assetName)
+    {
+        return installUpdate (downloadUrl, assetName);
+    }
+
+private:
+    static bool looksLikeZip (const juce::File& f)
+    {
+        juce::FileInputStream in (f);
+        if (! in.openedOk()) return false;
+        char magic[4] = {};
+        if (in.read (magic, 4) < 2) return false;
+        return magic[0] == 'P' && magic[1] == 'K';
+    }
+
+    static juce::String scheduleReplaceAndRelaunch (const juce::File& exe, const juce::File& staged)
+    {
+        const auto dir = exe.getParentDirectory();
+        const auto exePath = exe.getFullPathName();
+        const auto stagedPath = staged.getFullPathName();
+
+       #if JUCE_WINDOWS
+        const auto bat = dir.getChildFile ("_apply_update.bat");
         juce::String script;
         script << "@echo off\r\n"
                << "timeout /t 2 /nobreak >nul\r\n"
@@ -198,19 +400,41 @@ public:
                << "  timeout /t 1 /nobreak >nul\r\n"
                << "  goto retry\r\n"
                << ")\r\n"
-               << "move /y \"" << tempPath << "\" \"" << exePath << "\"\r\n"
+               << "move /y \"" << stagedPath << "\" \"" << exePath << "\"\r\n"
                << "start \"\" \"" << exePath << "\"\r\n"
                << "del /f /q \"%~f0\"\r\n";
-
         bat.replaceWithText (script);
-
-        juce::File batFile (batPath);
-        juce::ChildProcess proc;
-        // Run detached via cmd
-        juce::String cmd = "cmd.exe /C start \"\" /MIN \"" + batPath + "\"";
-        juce::ignoreUnused (proc);
+        juce::String cmd = "cmd.exe /C start \"\" /MIN \"" + bat.getFullPathName() + "\"";
         system (cmd.toRawUTF8());
-
+        return {};
+       #else
+        // Linux / macOS: shell script
+        const auto sh = dir.getChildFile ("_apply_update.sh");
+        juce::String script;
+        script << "#!/bin/sh\n"
+               << "sleep 2\n"
+               << "EXE=\"" << exePath << "\"\n"
+               << "NEW=\"" << stagedPath << "\"\n"
+               << "i=0\n"
+               << "while [ $i -lt 30 ]; do\n"
+               << "  rm -f \"$EXE\" 2>/dev/null && break\n"
+               << "  sleep 1\n"
+               << "  i=$((i+1))\n"
+               << "done\n"
+               << "mv -f \"$NEW\" \"$EXE\"\n"
+               << "chmod +x \"$EXE\"\n"
+               << "\"$EXE\" &\n"
+               << "rm -f \"$0\"\n";
+        sh.replaceWithText (script);
+        sh.setExecutePermission (true);
+        juce::ChildProcess proc;
+        // Detach: no wait
+        if (! proc.start ("/bin/sh \"" + sh.getFullPathName() + "\"",
+                          juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr))
+        {
+            // Fallback
+            system (("nohup /bin/sh \"" + sh.getFullPathName() + "\" >/dev/null 2>&1 &").toRawUTF8());
+        }
         return {};
        #endif
     }
