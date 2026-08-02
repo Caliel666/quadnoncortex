@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(quadnoncortex VERSION 1.1.1)
+project(quadnoncortex VERSION 1.1.2)
 
 # Multi-config (VS): add Dev = RelWithDebInfo + QUADNONCORTEX_DEV
 if (CMAKE_CONFIGURATION_TYPES)
@@ -25,7 +25,7 @@ juce_add_gui_app(quadnoncortex
     PRODUCT_NAME "quadnoncortex"
     COMPANY_NAME "quadnoncortex"
     BUNDLE_ID    "com.quadnoncortex.app"
-    VERSION      "1.1.1"
+    VERSION      "1.1.2"
     NEEDS_CURL   TRUE
     NEEDS_WEB_BROWSER FALSE
 )
