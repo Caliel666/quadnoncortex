@@ -6,7 +6,66 @@ TunerComponent::TunerComponent()
 {
     ring.setSize (1, kRingSize);
     ring.clear();
+
+    refDown.setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+    refUp.setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+    muteBtn.setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+
+    refDown.onClick = [this] { setReferenceHz (referenceHz - 1.0f); };
+    refUp.onClick   = [this] { setReferenceHz (referenceHz + 1.0f); };
+    muteBtn.onClick = [this] { setOutputMuted (! muteOutput); };
+
+    refLabel.setJustificationType (juce::Justification::centred);
+    refLabel.setInterceptsMouseClicks (false, false);
+
+    addAndMakeVisible (refDown);
+    addAndMakeVisible (refUp);
+    addAndMakeVisible (refLabel);
+    addAndMakeVisible (muteBtn);
+
+    updateRefLabel();
+    updateMuteButton();
     startTimerHz (30);
+}
+
+void TunerComponent::setReferenceHz (float hz)
+{
+    referenceHz = juce::jlimit (420.0f, 460.0f, hz);
+    updateRefLabel();
+}
+
+void TunerComponent::setOutputMuted (bool muted)
+{
+    if (muteOutput == muted)
+        return;
+    muteOutput = muted;
+    updateMuteButton();
+    if (onMuteChanged)
+        onMuteChanged (muteOutput);
+}
+
+void TunerComponent::updateRefLabel()
+{
+    refLabel.setText (juce::String (referenceHz, 0) + " Hz", juce::dontSendNotification);
+    // Large readable font for bottom bar
+    const float fs = juce::jlimit (22.0f, 36.0f, (float) getHeight() * 0.055f);
+    refLabel.setFont (juce::FontOptions (fs > 1.0f ? fs : 28.0f, juce::Font::bold));
+}
+
+void TunerComponent::updateMuteButton()
+{
+    muteBtn.setButtonText (muteOutput ? "MUTED" : "UNMUTED");
+    auto& th = Theme::get();
+    if (muteOutput)
+    {
+        muteBtn.setColour (juce::TextButton::buttonColourId, th.danger.withAlpha (0.85f));
+        muteBtn.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    }
+    else
+    {
+        muteBtn.setColour (juce::TextButton::buttonColourId, th.accent.withAlpha (0.75f));
+        muteBtn.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    }
 }
 
 void TunerComponent::pushSamples (const float* data, int numSamples)
@@ -39,87 +98,255 @@ void TunerComponent::analyse()
     for (float s : buf) rms += s * s;
     rms = std::sqrt (rms / (float) kRingSize);
 
-    if (rms < 0.008f)
+    if (rms < 0.0030f)
     {
         hasNote = false;
         detectedFreq = 0.0f;
         centsOffset = 0.0f;
         smoothCents *= 0.88f;
         smoothFreq  *= 0.88f;
+        // Decay lock slowly so a brief gap doesn't throw octave away
+        if (lockFrames > 0)
+            --lockFrames;
+        if (lockFrames <= 0)
+            lockedFreq = 0.0f;
         return;
     }
 
-    const int minPeriod = juce::jmax (2, (int) (sr / 400.0));
-    const int maxPeriod = juce::jmin (kRingSize / 2 - 2, (int) (sr / 70.0));
+    // YIN-style cumulative mean normalized difference (more stable than raw ACF)
+    const int minPeriod = juce::jmax (2, (int) (sr / (double) kMaxFreq));
+    const int maxPeriod = juce::jmin (kRingSize / 3, (int) (sr / (double) kMinFreq));
 
-    float bestCorr = -1.0f;
-    int   bestLag  = minPeriod;
-
-    for (int lag = minPeriod; lag <= maxPeriod; ++lag)
+    std::vector<float> d ((size_t) maxPeriod + 1, 0.0f);
+    for (int tau = 1; tau <= maxPeriod; ++tau)
     {
-        double corr = 0.0, e1 = 0.0, e2 = 0.0;
-        const int n = kRingSize - lag;
-        for (int i = 0; i < n; ++i)
+        double sum = 0.0;
+        const int n = kRingSize - tau;
+        // stride for speed on large buffers
+        const int step = (n > 6000) ? 2 : 1;
+        for (int i = 0; i < n; i += step)
         {
-            const double a = (double) buf[(size_t) i];
-            const double b = (double) buf[(size_t) (i + lag)];
-            corr += a * b; e1 += a * a; e2 += b * b;
+            const double delta = (double) buf[(size_t) i] - (double) buf[(size_t) (i + tau)];
+            sum += delta * delta;
         }
-        const float ncorr = (float) (corr / (std::sqrt (e1 * e2) + 1.0e-12));
-        if (ncorr > bestCorr) { bestCorr = ncorr; bestLag = lag; }
+        d[(size_t) tau] = (float) sum;
     }
 
-    if (bestCorr < 0.55f) { hasNote = false; return; }
-
-    float period = (float) bestLag;
-    if (bestLag > minPeriod && bestLag < maxPeriod)
+    // Cumulative mean normalize
+    double running = 0.0;
+    std::vector<float> cmnd ((size_t) maxPeriod + 1, 1.0f);
+    cmnd[0] = 1.0f;
+    for (int tau = 1; tau <= maxPeriod; ++tau)
     {
-        auto corrAt = [&] (int lag) -> float
-        {
-            double corr = 0.0, e1 = 0.0, e2 = 0.0;
-            const int n = kRingSize - lag;
-            for (int i = 0; i < n; i += 2)
-            {
-                const double a = (double) buf[(size_t) i];
-                const double b = (double) buf[(size_t) (i + lag)];
-                corr += a * b; e1 += a * a; e2 += b * b;
-            }
-            return (float) (corr / (std::sqrt (e1 * e2) + 1.0e-12));
-        };
-        const float ym1 = corrAt (bestLag - 1);
-        const float y0  = bestCorr;
-        const float yp1 = corrAt (bestLag + 1);
-        const float denom = 2.0f * (2.0f * y0 - yp1 - ym1);
-        if (std::abs (denom) > 1.0e-6f)
-            period = (float) bestLag + (ym1 - yp1) / denom;
+        running += (double) d[(size_t) tau];
+        cmnd[(size_t) tau] = (float) (d[(size_t) tau] * (double) tau / (running + 1.0e-12));
     }
 
-    detectedFreq = (float) (sr / (double) period);
-    if (detectedFreq < 70.0f || detectedFreq > 400.0f) { hasNote = false; return; }
+    // Absolute threshold: find first dip below threshold, then local minimum
+    const float yinThresh = 0.18f;
+    int bestTau = -1;
+    float bestVal = 1.0f;
 
-    const float midi = 69.0f + 12.0f * std::log2 (detectedFreq / 440.0f);
+    for (int tau = minPeriod; tau <= maxPeriod; ++tau)
+    {
+        if (cmnd[(size_t) tau] < yinThresh)
+        {
+            // Walk to local minimum
+            while (tau + 1 <= maxPeriod && cmnd[(size_t) (tau + 1)] < cmnd[(size_t) tau])
+                ++tau;
+            bestTau = tau;
+            bestVal = cmnd[(size_t) tau];
+            break;
+        }
+    }
+
+    // Fallback: global minimum in range if no threshold cross
+    if (bestTau < 0)
+    {
+        for (int tau = minPeriod; tau <= maxPeriod; ++tau)
+        {
+            if (cmnd[(size_t) tau] < bestVal)
+            {
+                bestVal = cmnd[(size_t) tau];
+                bestTau = tau;
+            }
+        }
+        // Require a reasonably deep dip
+        if (bestVal > 0.35f)
+        {
+            hasNote = false;
+            return;
+        }
+    }
+
+    // Parabolic interpolation around bestTau
+    float period = (float) bestTau;
+    if (bestTau > minPeriod && bestTau < maxPeriod)
+    {
+        const float s0 = cmnd[(size_t) (bestTau - 1)];
+        const float s1 = cmnd[(size_t) bestTau];
+        const float s2 = cmnd[(size_t) (bestTau + 1)];
+        const float denom = 2.0f * (2.0f * s1 - s2 - s0);
+        if (std::abs (denom) > 1.0e-8f)
+            period = (float) bestTau + (s0 - s2) / denom;
+    }
+
+    float freq = (float) (sr / (double) period);
+    if (freq < kMinFreq || freq > kMaxFreq)
+    {
+        hasNote = false;
+        return;
+    }
+
+    // ---- Octave disambiguation ----
+    // Candidates: f, 2f, f/2 (if in range). Pick using YIN value + hysteresis.
+    struct Cand { float freq; float yin; };
+    Cand cands[3];
+    int nCands = 0;
+
+    auto yinAtFreq = [&] (float f) -> float
+    {
+        const int tau = juce::jlimit (minPeriod, maxPeriod, (int) std::lround (sr / (double) f));
+        return cmnd[(size_t) tau];
+    };
+
+    cands[nCands++] = { freq, bestVal };
+
+    if (freq * 2.0f <= kMaxFreq)
+        cands[nCands++] = { freq * 2.0f, yinAtFreq (freq * 2.0f) };
+    if (freq * 0.5f >= kMinFreq)
+        cands[nCands++] = { freq * 0.5f, yinAtFreq (freq * 0.5f) };
+
+    // Prefer candidate with lowest YIN (best period match)
+    int bestC = 0;
+    for (int i = 1; i < nCands; ++i)
+        if (cands[i].yin < cands[bestC].yin * 0.97f) // need clear win to override
+            bestC = i;
+
+    // Hysteresis: if we already have a stable lock, prefer staying in that octave
+    if (lockedFreq > 1.0f && lockFrames >= 4)
+    {
+        int closest = 0;
+        float bestRatio = 99.0f;
+        for (int i = 0; i < nCands; ++i)
+        {
+            const float r = std::max (cands[i].freq / lockedFreq, lockedFreq / cands[i].freq);
+            // Prefer same octave (ratio ~1) or exact octave (ratio ~2) only if YIN is competitive
+            if (r < bestRatio)
+            {
+                bestRatio = r;
+                closest = i;
+            }
+        }
+        // Stay with locked octave if within ~3% or exact octave and not much worse YIN
+        if (bestRatio < 1.04f
+            || (bestRatio < 2.08f && bestRatio > 1.92f && cands[closest].yin < cands[bestC].yin * 1.15f))
+        {
+            // If closest is an octave off, snap to locked octave frequency scaling
+            if (bestRatio > 1.5f)
+            {
+                // Pick the cand nearest lockedFreq
+                bestC = closest;
+            }
+            else
+            {
+                bestC = closest;
+            }
+        }
+    }
+
+    freq = cands[bestC].freq;
+
+    // Median of recent estimates for display stability
+    recentFreqs[recentIdx] = freq;
+    recentIdx = (recentIdx + 1) % 5;
+    if (recentCount < 5) ++recentCount;
+    {
+        float tmp[5];
+        for (int i = 0; i < recentCount; ++i)
+            tmp[i] = recentFreqs[i];
+        // simple insertion sort
+        for (int i = 1; i < recentCount; ++i)
+        {
+            float v = tmp[i];
+            int j = i;
+            while (j > 0 && tmp[j - 1] > v) { tmp[j] = tmp[j - 1]; --j; }
+            tmp[j] = v;
+        }
+        freq = tmp[recentCount / 2];
+    }
+
+    // Update lock
+    if (lockedFreq < 1.0f)
+    {
+        lockedFreq = freq;
+        lockFrames = 1;
+    }
+    else
+    {
+        const float ratio = std::max (freq / lockedFreq, lockedFreq / freq);
+        if (ratio < 1.06f)
+        {
+            lockedFreq = 0.85f * lockedFreq + 0.15f * freq;
+            lockFrames = juce::jmin (60, lockFrames + 1);
+        }
+        else if (ratio > 1.9f && ratio < 2.1f)
+        {
+            // Octave jump candidate — only accept after sustained disagreement
+            lockFrames = juce::jmax (0, lockFrames - 2);
+            if (lockFrames < 3)
+            {
+                lockedFreq = freq;
+                lockFrames = 1;
+                recentCount = 0; // reset median buffer on accepted octave change
+            }
+            else
+            {
+                // Hold previous octave
+                freq = lockedFreq;
+            }
+        }
+        else
+        {
+            // Unrelated note — retune lock
+            lockedFreq = freq;
+            lockFrames = 1;
+            recentCount = 1;
+            recentIdx = 0;
+            recentFreqs[0] = freq;
+        }
+    }
+
+    detectedFreq = freq;
+
+    const float ref = referenceHz > 1.0f ? referenceHz : 440.0f;
+    const float midi = 69.0f + 12.0f * std::log2 (detectedFreq / ref);
     const int nearest = (int) std::round (midi);
     centsOffset = (midi - (float) nearest) * 100.0f;
 
     static const char* names[] = { "C","C#","D","D#","E","F","F#","G","G#","A","A#","B" };
-    const int n = ((nearest % 12) + 12) % 12;
-    noteName = juce::String (names[n]);
+    const int nn = ((nearest % 12) + 12) % 12;
+    noteName = juce::String (names[nn]);
     noteOctave = (nearest / 12) - 1;
     hasNote = true;
 
-    const float a = 0.22f;
+    const float a = 0.32f;
     smoothCents = smoothCents + a * (centsOffset - smoothCents);
     smoothFreq  = smoothFreq  + a * (detectedFreq - smoothFreq);
 }
 
 void TunerComponent::timerCallback() { analyse(); repaint(); }
 
-//==============================================================================
 void TunerComponent::paint (juce::Graphics& g)
 {
     auto& th = Theme::get();
     g.fillAll (th.background);
     const bool light = th.currentName == "Light";
+    // Keep controls readable; do not alter arc geometry
+    const auto inkCtrl = light ? juce::Colour (0xff1f2329) : juce::Colours::white;
+    refLabel.setColour (juce::Label::textColourId, inkCtrl);
+    refDown.setColour (juce::TextButton::textColourOffId, inkCtrl);
+    refUp.setColour (juce::TextButton::textColourOffId, inkCtrl);
     const auto ink = light ? juce::Colour (0xff1f2329) : juce::Colours::white;
     const auto inkDim = light ? juce::Colour (0xff6b7280) : juce::Colours::white.withAlpha (0.35f);
 
@@ -275,4 +502,30 @@ void TunerComponent::paint (juce::Graphics& g)
     }
 }
 
-void TunerComponent::resized() {}
+void TunerComponent::resized()
+{
+    const int W = getWidth();
+    const int H = getHeight();
+    if (W < 40 || H < 40) return;
+
+    const int ctrlH = juce::jlimit (40, 56, H / 11);
+    const int margin = juce::jmax (10, W / 36);
+    const int btnW = juce::jlimit (48, 72, W / 12);
+    const int gap = 6;
+
+    // Bottom-left: [ - ]  440 Hz  [ + ]
+    auto bottom = juce::Rectangle<int> (margin, H - margin - ctrlH, W - 2 * margin, ctrlH);
+    auto left = bottom.removeFromLeft (btnW * 2 + gap * 2 + juce::jlimit (90, 140, W / 6));
+    refDown.setBounds (left.removeFromLeft (btnW));
+    left.removeFromLeft (gap);
+    const int labelW = left.getWidth() - btnW - gap;
+    refLabel.setBounds (left.removeFromLeft (labelW));
+    left.removeFromLeft (gap);
+    refUp.setBounds (left.removeFromLeft (btnW));
+
+    // Bottom-right: MUTED / UNMUTED
+    const int muteW = juce::jlimit (100, 150, W / 5);
+    muteBtn.setBounds (bottom.removeFromRight (muteW));
+
+    updateRefLabel();
+}

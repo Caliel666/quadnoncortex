@@ -108,6 +108,11 @@ MainComponent::MainComponent()
     addAndMakeVisible (parameterPanel.get());
 
     tuner = std::make_unique<TunerComponent>();
+    tuner->onMuteChanged = [this] (bool muted)
+    {
+        if (currentTab == 1)
+            audioEngine.setMuted (muted);
+    };
     addChildComponent (tuner.get());
 
     pluginBrowser = std::make_unique<PluginBrowser> (audioEngine.getPluginChain());
@@ -282,7 +287,12 @@ void MainComponent::setTab (int tab)
     blocksViewport.setVisible (board);
     if (parameterPanel) parameterPanel->setVisible (board && selectedIndex >= 0);
     if (tuner) tuner->setVisible (! board);
-    audioEngine.setMuted (! board);
+    if (board)
+        audioEngine.setMuted (false);
+    else if (tuner != nullptr)
+        audioEngine.setMuted (tuner->isOutputMuted());
+    else
+        audioEngine.setMuted (true);
     tabPedal.setToggleState (board, juce::dontSendNotification);
     tabTuner.setToggleState (! board, juce::dontSendNotification);
     Theme::get().applyToggleTab (tabPedal, board);
