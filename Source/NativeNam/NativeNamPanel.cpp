@@ -162,7 +162,10 @@ NativeNamPanel::NativeNamPanel (NativeNamProcessor& proc, MidiLearnManager& lear
     th.applyToggleTab (tabConfig, true);
     th.applyToggleTab (tabT3k, false);
 
-    addAndMakeVisible (configPage);
+    configViewport.setViewedComponent (&configPage, false);
+    configViewport.setScrollBarsShown (true, true);
+    configViewport.setScrollBarThickness (22);
+    addAndMakeVisible (configViewport);
     addAndMakeVisible (t3kPage);
     t3kPage.setVisible (false);
 
@@ -516,6 +519,7 @@ void NativeNamPanel::timerCallback()
 void NativeNamPanel::setTab (int t)
 {
     currentTab = t;
+    configViewport.setVisible (t == 0);
     configPage.setVisible (t == 0);
     t3kPage.setVisible (t == 1);
     Theme::get().applyToggleTab (tabConfig, t == 0);
@@ -540,6 +544,7 @@ void NativeNamPanel::openLibraryBrowser (NamLibrary::Kind kind)
     const char* titles[] = { "Select Pedal", "Select Amp", "Select Cab IR" };
     libTitle.setText (titles[(int) kind], juce::dontSendNotification);
     // Hide main pages so they cannot draw through the popup
+    configViewport.setVisible (false);
     configPage.setVisible (false);
     t3kPage.setVisible (false);
     rebuildLibraryList (kind);
@@ -552,6 +557,7 @@ void NativeNamPanel::openLibraryBrowser (NamLibrary::Kind kind)
 void NativeNamPanel::closeLibraryBrowser()
 {
     libOverlay.setVisible (false);
+    configViewport.setVisible (currentTab == 0);
     configPage.setVisible (currentTab == 0);
     t3kPage.setVisible (currentTab == 1);
     resized();
@@ -746,6 +752,28 @@ void NativeNamPanel::paint (juce::Graphics& g)
     auto& th = Theme::get();
     g.fillAll (th.surface);
 
+    // Vertical section dividers (Pedal | Amp | Cab | Globals) on CONFIG
+    if (currentTab == 0 && ! libOverlay.isVisible() && dividerXs.size() > 0
+        && configViewport.isVisible())
+    {
+        g.setColour (th.text.withAlpha (0.12f));
+        const auto viewBounds = configViewport.getBounds();
+        const int scrollY = configViewport.getViewPositionY();
+        const int scrollX = configViewport.getViewPositionX();
+        const int top = viewBounds.getY() + 100 - scrollY;
+        const int bot = viewBounds.getBottom() - 8;
+        if (bot > top)
+        {
+            for (auto dx : dividerXs)
+            {
+                const int x = viewBounds.getX() + dx - scrollX;
+                if (x > viewBounds.getX() && x < viewBounds.getRight() - 20)
+                    g.drawLine ((float) x, (float) juce::jmax (top, viewBounds.getY() + 4),
+                                (float) x, (float) bot, 1.0f);
+            }
+        }
+    }
+
     if (libOverlay.isVisible())
     {
         // Full dim (config/t3k are hidden)
@@ -774,11 +802,23 @@ void NativeNamPanel::resized()
 
     if (currentTab == 0)
     {
-        configPage.setBounds (r);
-        auto area = configPage.getLocalBounds().reduced (6);
+        configViewport.setBounds (r);
+        configViewport.setVisible (true);
+        t3kPage.setVisible (false);
 
-        auto header = area.removeFromTop (96);
-        const int colW = header.getWidth() / 3;
+        const int viewW = juce::jmax (320, configViewport.getWidth() - 24);
+        constexpr int cellW = 132;
+        constexpr int cellH = 148;
+        constexpr int gap = 4;
+
+        const bool pedalOn = processor.bypassPedalParam == nullptr
+                             || processor.bypassPedalParam->get() < 0.5f;
+        const bool ampOn   = processor.bypassAmpParam == nullptr
+                             || processor.bypassAmpParam->get() < 0.5f;
+
+        // Slot headers
+        auto header = juce::Rectangle<int> (0, 0, viewW, 96);
+        const int colW = juce::jmax (1, viewW / 3);
         auto layoutSlotHeader = [] (juce::Rectangle<int> c, juce::Label& title, juce::Label& name,
                                     juce::TextButton& load, juce::TextButton& clear)
         {
@@ -795,48 +835,54 @@ void NativeNamPanel::resized()
         layoutSlotHeader (header.reduced (4, 0),
                           cabTitle, cabName, cabBtn, cabClear);
 
-        area.removeFromTop (6);
+        // One horizontal strip of groups: Pedal | Amp | Cab | Globals
+        int x = 8;
+        const int y = 104;
+        dividerXs.clear();
 
-        const bool pedalOn = processor.bypassPedalParam == nullptr
-                             || processor.bypassPedalParam->get() < 0.5f;
-        const bool ampOn   = processor.bypassAmpParam == nullptr
-                             || processor.bypassAmpParam->get() < 0.5f;
-        const bool cabOn   = processor.bypassCabParam == nullptr
-                             || processor.bypassCabParam->get() < 0.5f;
-
-        struct Item { ControlRow* row; bool vis; };
-        const Item items[] = {
-            { bypassPedalRow.get(), true },
-            { pedalMixRow.get(),    pedalOn },
-            { bypassAmpRow.get(),   true },
-            { ampGainRow.get(),     ampOn },
-            { ampLowRow.get(),      ampOn },
-            { ampMidRow.get(),      ampOn },
-            { ampHighRow.get(),     ampOn },
-            { bypassCabRow.get(),   true },
-            { liteRow.get(),        true },
-            { inGainRow.get(),      true },
-            { outGainRow.get(),     true },
+        auto place = [&] (ControlRow* row, bool vis)
+        {
+            if (row == nullptr) return;
+            row->setVisible (vis);
+            if (! vis) return;
+            row->setBounds (x, y, cellW, cellH);
+            x += cellW + gap;
         };
 
-        constexpr int cellW = 152;
-        constexpr int cellH = 176;
-        const int cols = juce::jmax (1, area.getWidth() / cellW);
-        int x = 0, y = 0;
-        for (const auto& it : items)
-        {
-            if (it.row == nullptr) continue;
-            it.row->setVisible (it.vis);
-            if (! it.vis) continue;
-            if (x >= cols) { x = 0; ++y; }
-            it.row->setBounds (area.getX() + x * cellW,
-                               area.getY() + y * cellH,
-                               cellW, cellH);
-            ++x;
-        }
+        // PEDAL group
+        place (bypassPedalRow.get(), true);
+        place (pedalMixRow.get(), pedalOn);
+        dividerXs.add (x + 2);
+        x += 10;
+
+        // AMP group
+        place (bypassAmpRow.get(), true);
+        place (ampGainRow.get(), ampOn);
+        place (ampLowRow.get(), ampOn);
+        place (ampMidRow.get(), ampOn);
+        place (ampHighRow.get(), ampOn);
+        dividerXs.add (x + 2);
+        x += 10;
+
+        // CAB group
+        place (bypassCabRow.get(), true);
+        dividerXs.add (x + 2);
+        x += 10;
+
+        // GLOBALS
+        place (liteRow.get(), true);
+        place (inGainRow.get(), true);
+        place (outGainRow.get(), true);
+
+        const int contentW = juce::jmax (viewW, x + 12);
+        const int contentH = y + cellH + 16;
+        configPage.setSize (contentW, juce::jmax (contentH, configViewport.getHeight()));
     }
+
     else
     {
+        configViewport.setVisible (false);
+        t3kPage.setVisible (true);
         t3kPage.setBounds (r);
         auto m = t3kPage.getLocalBounds().reduced (6);
         t3kStatus.setBounds (m.removeFromTop (28));

@@ -132,8 +132,10 @@ private:
     juce::TextButton tabConfig { "CONFIG" };
     juce::TextButton tabT3k    { "TONE3000" };
     int currentTab = 0;
+    juce::Array<int> dividerXs;
 
     // ---- CONFIG ----
+    juce::Viewport configViewport;
     juce::Component configPage;
 
     juce::Label pedalTitle { {}, "PEDAL" };
