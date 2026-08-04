@@ -1,218 +1,245 @@
 #include "ParameterPanel.h"
-#include "Theme.h"
 #include "NativeNam/NativeNamProcessor.h"
 
-ParameterPanel::ParamRow::ParamRow (int paramIdx, juce::AudioProcessorParameter* param,
-                                    MidiLearnManager& mgr, int pluginIdx)
-    : paramIndex (paramIdx), pluginIndex (pluginIdx), parameter (param), learnManager (mgr)
-{
-    nameLabel.setText (param->getName (48), juce::dontSendNotification);
-    nameLabel.setFont (juce::FontOptions (16.0f, juce::Font::bold));
-    nameLabel.setColour (juce::Label::textColourId, Theme::get().text);
-    addAndMakeVisible (nameLabel);
-
-    valueLabel.setFont (juce::FontOptions (14.0f));
-    valueLabel.setColour (juce::Label::textColourId, Theme::get().textDim);
-    valueLabel.setJustificationType (juce::Justification::centredRight);
-    addAndMakeVisible (valueLabel);
-
-    // Detect boolean / toggle parameters
-    isToggle = param->isBoolean()
-               || (param->getNumSteps() == 2)
-               || (param->getAllValueStrings().size() == 2);
-
-    if (isToggle)
-    {
-        toggle.setToggleState (param->getValue() >= 0.5f, juce::dontSendNotification);
-        toggle.setColour (juce::ToggleButton::tickColourId, Theme::get().accent);
-        toggle.setColour (juce::ToggleButton::textColourId, Theme::get().text);
-        toggle.onClick = [this]
-        {
-            if (parameter != nullptr)
-                parameter->setValueNotifyingHost (toggle.getToggleState() ? 1.0f : 0.0f);
-            valueLabel.setText (parameter->getText (parameter->getValue(), 32),
-                                juce::dontSendNotification);
-        };
-        addAndMakeVisible (toggle);
-        slider.setVisible (false);
-    }
-    else
-    {
-        slider.setRange (0.0, 1.0, 0.0);
-        slider.setValue (param->getValue(), juce::dontSendNotification);
-        slider.setSliderStyle (juce::Slider::LinearHorizontal);
-        slider.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
-        slider.setColour (juce::Slider::thumbColourId, Theme::get().accent);
-        slider.setColour (juce::Slider::trackColourId, Theme::get().accent);
-        slider.setColour (juce::Slider::backgroundColourId, Theme::get().surfaceAlt);
-        addAndMakeVisible (slider);
-        toggle.setVisible (false);
-    }
-
-    valueLabel.setText (param->getText (param->getValue(), 32), juce::dontSendNotification);
-
-    Theme::get().applyButton (learnButton);
-    learnButton.onClick = [this]
-    {
-        if (learnManager.isLearning()) learnManager.cancelLearn();
-        else learnManager.startLearn (pluginIndex, paramIndex);
-        updateLearnButton();
-    };
-    addAndMakeVisible (learnButton);
-
-    clearMidiButton.setButtonText ("X");
-    Theme::get().applyButton (clearMidiButton, false, true);
-    clearMidiButton.setTooltip ("Clear MIDI assignment");
-    clearMidiButton.onClick = [this]
-    {
-        learnManager.clearBinding (pluginIndex, paramIndex);
-        updateLearnButton();
-    };
-    addAndMakeVisible (clearMidiButton);
-    updateLearnButton();
-}
-
-ParameterPanel::ParamRow::~ParamRow() {}
-
-void ParameterPanel::ParamRow::setFromNormalised (float v)
-{
-    if (isToggle)
-        toggle.setToggleState (v >= 0.5f, juce::dontSendNotification);
-    else
-        slider.setValue (v, juce::dontSendNotification);
-
-    if (parameter != nullptr)
-        valueLabel.setText (parameter->getText (v, 32), juce::dontSendNotification);
-}
-
-void ParameterPanel::ParamRow::updateLearnButton()
-{
-    const bool hasMidi = learnManager.findBinding (pluginIndex, paramIndex) != nullptr;
-    // Only THIS row shows "..." — not every parameter (that looked like a crash/bug)
-    const bool learningThis = learnManager.isLearning()
-                              && learnManager.getLearnPlugin() == pluginIndex
-                              && learnManager.getLearnParam() == paramIndex;
-
-    if (learningThis)
-    {
-        learnButton.setButtonText ("...");
-        learnButton.setColour (juce::TextButton::buttonColourId, Theme::get().warning);
-    }
-    else if (hasMidi)
-    {
-        learnButton.setButtonText ("MIDI");
-        learnButton.setColour (juce::TextButton::buttonColourId, Theme::get().success);
-    }
-    else
-    {
-        learnButton.setButtonText ("LEARN");
-        learnButton.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
-    }
-
-    clearMidiButton.setVisible (true);
-    clearMidiButton.setEnabled (hasMidi);
-    clearMidiButton.setAlpha (hasMidi ? 1.0f : 0.35f);
-}
-
-void ParameterPanel::ParamRow::paint (juce::Graphics& g)
+//==============================================================================
+ParamKnobCell::ParamKnobCell (int paramIdx, juce::AudioProcessorParameter* param,
+                              MidiLearnManager& mgr, int pluginIdx,
+                              std::function<void(ParamKnobCell*)> onOpenMidiMenu,
+                              std::function<void(ParamKnobCell*)> onOpenValueEdit)
+    : paramIndex (paramIdx), pluginIndex (pluginIdx), parameter (param),
+      learnManager (mgr), openMidiMenu (std::move (onOpenMidiMenu)),
+      openValueEdit (std::move (onOpenValueEdit))
 {
     auto& th = Theme::get();
-    g.setColour (th.text.withAlpha (0.08f));
-    g.fillRect (getLocalBounds().removeFromBottom (1));
-}
 
-void ParameterPanel::ParamRow::resized()
-{
-    auto r = getLocalBounds().reduced (14, 6);
-    const int btnY = r.getY() + (r.getHeight() - 36) / 2;
-    clearMidiButton.setBounds (r.removeFromRight (44).withHeight (40).withY (btnY));
-    r.removeFromRight (6);
-    learnButton.setBounds (r.removeFromRight (88).withHeight (40).withY (btnY));
-    r.removeFromRight (8);
-    valueLabel.setBounds (r.removeFromRight (90).removeFromTop (22));
-    nameLabel.setBounds (r.removeFromTop (22));
-    if (isToggle)
-        toggle.setBounds (r.withWidth (80));
-    else
-        slider.setBounds (r);
-}
+    isToggle = param->isBoolean()
+               || (param->getNumSteps() == 2 && param->getAllValueStrings().size() <= 2);
+    isChoice = ! isToggle && param->isDiscrete() && param->getNumSteps() > 2
+               && param->getNumSteps() < 32;
 
-//==============================================================================
-ParameterPanel::ParameterPanel (MidiLearnManager& learnMgr) : midiLearn (learnMgr)
-{
-    titleLabel.setFont (juce::FontOptions (18.0f, juce::Font::bold));
-    titleLabel.setColour (juce::Label::textColourId, Theme::get().text);
-    addAndMakeVisible (titleLabel);
+    defaultNorm = param->getDefaultValue();
 
-    Theme::get().applyButton (bypassButton);
-    bypassButton.onClick = [this] { if (bypassCallback) bypassCallback(); };
-    addAndMakeVisible (bypassButton);
+    nameLabel.setText (param->getName (28), juce::dontSendNotification);
+    nameLabel.setFont (juce::FontOptions (12.5f, juce::Font::bold));
+    nameLabel.setColour (juce::Label::textColourId, th.text);
+    nameLabel.setJustificationType (juce::Justification::centred);
+    nameLabel.setInterceptsMouseClicks (false, false);
+    addAndMakeVisible (nameLabel);
 
-    Theme::get().applyButton (monoButton);
-    monoButton.onClick = [this] { if (monoToggleCallback) monoToggleCallback(); };
-    addAndMakeVisible (monoButton);
+    valueLabel.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+    valueLabel.setColour (juce::Label::textColourId, th.accent);
+    valueLabel.setJustificationType (juce::Justification::centredLeft);
+    valueLabel.setInterceptsMouseClicks (false, false);
+    addAndMakeVisible (valueLabel);
 
-    Theme::get().applyButton (bypassLearnButton);
-    bypassLearnButton.onClick = [this]
+    resetBtn.setButtonText (juce::String::fromUTF8 ("\xE2\x86\xBA"));
+    resetBtn.setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+    resetBtn.setColour (juce::TextButton::textColourOffId, th.textDim);
+    resetBtn.onClick = [this]
     {
-        if (currentPluginIndex < 0) return;
-        if (midiLearn.isLearning()) midiLearn.cancelLearn();
-        else midiLearn.startLearn (currentPluginIndex, -2); // -2 = bypass
-        const bool learningBypass = midiLearn.isLearning()
-                                    && midiLearn.getLearnPlugin() == currentPluginIndex
-                                    && midiLearn.getLearnParam() == -2;
-        if (learningBypass)
+        if (parameter == nullptr) return;
+        parameter->setValueNotifyingHost (defaultNorm);
+        setFromNormalised (defaultNorm);
+    };
+    addAndMakeVisible (resetBtn);
+
+    if (isToggle)
+    {
+        switchToggle.onChange = [this] (bool on)
         {
-            bypassLearnButton.setButtonText ("...");
-            bypassLearnButton.setColour (juce::TextButton::buttonColourId, Theme::get().warning);
-            bypassClearButton.setEnabled (false);
-            bypassClearButton.setAlpha (0.35f);
-        }
-        else if (midiLearn.findBinding (currentPluginIndex, -2) != nullptr)
+            if (parameter == nullptr) return;
+            parameter->setValueNotifyingHost (on ? 1.0f : 0.0f);
+            setFromNormalised (on ? 1.0f : 0.0f);
+        };
+        addAndMakeVisible (switchToggle);
+        knob.setVisible (false);
+        choiceBox.setVisible (false);
+    }
+    else if (isChoice)
+    {
+        const auto labels = param->getAllValueStrings();
+        if (labels.isEmpty())
         {
-            bypassLearnButton.setButtonText ("MIDI");
-            bypassLearnButton.setColour (juce::TextButton::buttonColourId, Theme::get().success);
-            bypassClearButton.setEnabled (true);
-            bypassClearButton.setAlpha (1.0f);
+            for (int i = 0; i < param->getNumSteps(); ++i)
+                choiceBox.addItem (param->getText ((float) i / (float) juce::jmax (1, param->getNumSteps() - 1), 24), i + 1);
         }
         else
         {
-            bypassLearnButton.setButtonText ("LEARN");
-            bypassLearnButton.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
-            bypassClearButton.setEnabled (false);
-            bypassClearButton.setAlpha (0.35f);
+            for (int i = 0; i < labels.size(); ++i)
+                choiceBox.addItem (labels[i], i + 1);
         }
-    };
-    addAndMakeVisible (bypassLearnButton);
+        choiceBox.setColour (juce::ComboBox::backgroundColourId, th.surfaceAlt);
+        choiceBox.setColour (juce::ComboBox::outlineColourId, th.text.withAlpha (0.12f));
+        choiceBox.setColour (juce::ComboBox::textColourId, th.text);
+        choiceBox.onChange = [this]
+        {
+            if (parameter == nullptr) return;
+            const int n = juce::jmax (1, parameter->getNumSteps() - 1);
+            const int idx = choiceBox.getSelectedItemIndex();
+            parameter->setValueNotifyingHost (n > 0 ? (float) idx / (float) n : 0.0f);
+            setFromNormalised (parameter->getValue());
+        };
+        addAndMakeVisible (choiceBox);
+        knob.setVisible (false);
+        switchToggle.setVisible (false);
+    }
+    else
+    {
+        knob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+        knob.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+        knob.setRange (0.0, 1.0, 0.0);
+        knob.setRotaryParameters (juce::MathConstants<float>::pi * 1.2f,
+                                  juce::MathConstants<float>::pi * 2.8f, true);
+        knob.setColour (juce::Slider::rotarySliderFillColourId, th.accent);
+        knob.setColour (juce::Slider::rotarySliderOutlineColourId, th.surfaceAlt);
+        knob.setColour (juce::Slider::thumbColourId, juce::Colours::white);
+        knob.addListener (this);
+        addAndMakeVisible (knob);
+        switchToggle.setVisible (false);
+        choiceBox.setVisible (false);
+    }
 
-    bypassClearButton.setButtonText ("X");
-    Theme::get().applyButton (bypassClearButton, false, true);
-    bypassClearButton.setVisible (true);
-    bypassClearButton.setEnabled (false);
-    bypassClearButton.setAlpha (0.35f);
-    bypassClearButton.onClick = [this]
+    setFromNormalised (param->getValue());
+    refreshMidiIndicator();
+}
+
+void ParamKnobCell::sliderValueChanged (juce::Slider* s)
+{
+    if (s != &knob || parameter == nullptr) return;
+    parameter->setValueNotifyingHost ((float) knob.getValue());
+    valueLabel.setText (parameter->getText ((float) knob.getValue(), 24),
+                        juce::dontSendNotification);
+}
+
+void ParamKnobCell::setFromNormalised (float v)
+{
+    if (isToggle)
+        switchToggle.setOn (v >= 0.5f, juce::dontSendNotification);
+    else if (isChoice && parameter != nullptr)
+    {
+        const int n = juce::jmax (1, parameter->getNumSteps() - 1);
+        const int idx = juce::jlimit (0, juce::jmax (0, choiceBox.getNumItems() - 1),
+                                      (int) std::round (v * (float) n));
+        choiceBox.setSelectedItemIndex (idx, juce::dontSendNotification);
+    }
+    else
+        knob.setValue (v, juce::dontSendNotification);
+
+    if (parameter != nullptr)
+        valueLabel.setText (parameter->getText (v, 24), juce::dontSendNotification);
+}
+
+void ParamKnobCell::refreshMidiIndicator()
+{
+    const bool has = learnManager.findBinding (pluginIndex, paramIndex) != nullptr;
+    const bool learning = learnManager.isLearning()
+                          && learnManager.getLearnPlugin() == pluginIndex
+                          && learnManager.getLearnParam() == paramIndex;
+    auto& th = Theme::get();
+    if (learning)
+        nameLabel.setColour (juce::Label::textColourId, th.warning);
+    else if (has)
+        nameLabel.setColour (juce::Label::textColourId, th.success);
+    else
+        nameLabel.setColour (juce::Label::textColourId, th.text);
+}
+
+void ParamKnobCell::paint (juce::Graphics& g)
+{
+    auto& th = Theme::get();
+    auto r = getLocalBounds().toFloat().reduced (3.0f);
+    g.setColour (th.surface.withAlpha (0.5f));
+    g.fillRoundedRectangle (r, 12.0f);
+    g.setColour (th.text.withAlpha (0.07f));
+    g.drawRoundedRectangle (r, 12.0f, 1.0f);
+}
+
+void ParamKnobCell::resized()
+{
+    auto r = getLocalBounds().reduced (8, 6);
+    nameLabel.setBounds (r.removeFromTop (24));
+    auto bottom = r.removeFromBottom (22);
+    resetBtn.setBounds (bottom.removeFromRight (26));
+    valueLabel.setBounds (bottom);
+
+    if (isToggle)
+        switchToggle.setBounds (r.withSizeKeepingCentre (54, 32));
+    else if (isChoice)
+        choiceBox.setBounds (r.withSizeKeepingCentre (juce::jmin (128, r.getWidth() - 8), 36));
+    else
+        knob.setBounds (r.reduced (6));
+}
+
+void ParamKnobCell::mouseDown (const juce::MouseEvent& e)
+{
+    if (nameLabel.getBounds().contains (e.getPosition()))
+    {
+        if (openMidiMenu) openMidiMenu (this);
+        return;
+    }
+    if (valueLabel.getBounds().contains (e.getPosition()) && ! isToggle)
+    {
+        if (openValueEdit) openValueEdit (this);
+        return;
+    }
+}
+
+//==============================================================================
+void ParameterPanel::styleHeaderButton (juce::TextButton& b, bool primary)
+{
+    Theme::get().applyButton (b, primary);
+    b.setColour (juce::TextButton::textColourOffId, Theme::get().text);
+    b.setColour (juce::TextButton::textColourOnId, Theme::get().text);
+}
+
+ParameterPanel::ParameterPanel (MidiLearnManager& learnMgr)
+    : midiLearn (learnMgr)
+{
+    titleLabel.setFont (juce::FontOptions (17.0f, juce::Font::bold));
+    titleLabel.setColour (juce::Label::textColourId, Theme::get().text);
+    titleLabel.setJustificationType (juce::Justification::centred);
+    addAndMakeVisible (titleLabel);
+
+    styleHeaderButton (bypassButton);
+    styleHeaderButton (monoButton);
+    styleHeaderButton (bypassLearnButton);
+    styleHeaderButton (bypassClearButton);
+    styleHeaderButton (colourButton);
+
+    bypassButton.onClick = [this] { if (bypassCallback) bypassCallback(); };
+    monoButton.onClick = [this] { if (monoToggleCallback) monoToggleCallback(); };
+    colourButton.onClick = [this] { if (colourCallback) colourCallback(); };
+    openEditorButton.onClick = [this] { if (openEditorCallback) openEditorCallback(); };
+
+    bypassLearnButton.onClick = [this]
     {
         if (currentPluginIndex < 0) return;
-        const int idx = currentPluginIndex;
-        midiLearn.clearBinding (idx, -2);
-        // Update UI directly (don't rely solely on onBindingsChanged chain)
-        bypassLearnButton.setButtonText ("LEARN");
-        bypassLearnButton.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
-        bypassClearButton.setEnabled (false);
-        bypassClearButton.setAlpha (0.35f);
-        bypassClearButton.setVisible (true);
+        if (midiLearn.isLearning()
+            && midiLearn.getLearnPlugin() == currentPluginIndex
+            && midiLearn.getLearnParam() == -2)
+            midiLearn.cancelLearn();
+        else
+            midiLearn.startLearn (currentPluginIndex, -2);
+        refreshMidiButtons();
     };
-    addAndMakeVisible (bypassClearButton);
+    bypassClearButton.onClick = [this]
+    {
+        if (currentPluginIndex >= 0)
+            midiLearn.clearBinding (currentPluginIndex, -2);
+        refreshMidiButtons();
+    };
 
-    Theme::get().applyButton (colourButton);
-    addAndMakeVisible (colourButton);
-
-    Theme::get().applyButton (openEditorButton);
-    openEditorButton.onClick = [this] { if (openEditorCallback) openEditorCallback(); };
     addAndMakeVisible (openEditorButton);
+    addAndMakeVisible (bypassButton);
+    addAndMakeVisible (monoButton);
+    addAndMakeVisible (bypassLearnButton);
+    addAndMakeVisible (bypassClearButton);
+    addAndMakeVisible (colourButton);
 
     viewport.setViewedComponent (&content, false);
     viewport.setScrollBarsShown (true, false);
+    viewport.setScrollBarThickness (kScrollBar);
+    viewport.setScrollOnDragMode (juce::Viewport::ScrollOnDragMode::never);
     addAndMakeVisible (viewport);
 
     {
@@ -227,15 +254,12 @@ ParameterPanel::ParameterPanel (MidiLearnManager& learnMgr) : midiLearn (learnMg
     }
 }
 
-ParameterPanel::~ParameterPanel()
-{
-    clear();
-}
+ParameterPanel::~ParameterPanel() { clear(); }
 
 void ParameterPanel::refreshMidiButtons()
 {
-    for (auto* row : rows)
-        row->updateLearnButton();
+    for (auto* c : cells)
+        c->refreshMidiIndicator();
 
     if (currentPluginIndex < 0) return;
 
@@ -243,35 +267,34 @@ void ParameterPanel::refreshMidiButtons()
                                 && midiLearn.getLearnPlugin() == currentPluginIndex
                                 && midiLearn.getLearnParam() == -2;
     const bool has = midiLearn.findBinding (currentPluginIndex, -2) != nullptr;
+    auto& th = Theme::get();
     if (learningBypass)
     {
         bypassLearnButton.setButtonText ("...");
-        bypassLearnButton.setColour (juce::TextButton::buttonColourId, Theme::get().warning);
+        bypassLearnButton.setColour (juce::TextButton::buttonColourId, th.warning);
     }
     else if (has)
     {
         bypassLearnButton.setButtonText ("MIDI");
-        bypassLearnButton.setColour (juce::TextButton::buttonColourId, Theme::get().success);
+        bypassLearnButton.setColour (juce::TextButton::buttonColourId, th.success);
     }
     else
     {
         bypassLearnButton.setButtonText ("LEARN");
-        bypassLearnButton.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
+        styleHeaderButton (bypassLearnButton);
     }
-    bypassClearButton.setVisible (true);
-    bypassClearButton.setEnabled (has && ! learningBypass);
-    bypassClearButton.setAlpha ((has && ! learningBypass) ? 1.0f : 0.35f);
+    bypassClearButton.setEnabled (has);
+    bypassClearButton.setAlpha (has ? 1.0f : 0.4f);
 }
 
 void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginIndex,
-                                bool bypassed, bool mono,
-                                std::function<void()> onBypass,
+                                bool bypassed, bool mono, std::function<void()> onBypass,
                                 std::function<void()> onMonoToggle,
                                 std::function<void()> onColour,
                                 std::function<void()> onOpenEditor)
 {
     clear();
-    midiLearn.cancelLearn();
+
     currentPlugin = instance;
     currentPluginIndex = pluginIndex;
     bypassCallback = std::move (onBypass);
@@ -287,39 +310,33 @@ void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginI
     }
 
     titleLabel.setText (instance->getName(), juce::dontSendNotification);
-
-    // Always refresh header for THIS plugin index (bypass / mono / MIDI / colour)
-    // so switching to Native NAM never leaves the previous plugin's top-bar state.
     updateBypass (bypassed);
     updateMono (mono);
-    colourButton.onClick = [this] { if (colourCallback) colourCallback(); };
-    openEditorButton.onClick = [this] { if (openEditorCallback) openEditorCallback(); };
-    openEditorButton.setEnabled (instance != nullptr && instance->hasEditor());
+    openEditorButton.setEnabled (instance->hasEditor());
     refreshMidiButtons();
 
-    // Native NAM gets a dedicated amp/pedal/cab + Tone3000 panel
     if (auto* nam = dynamic_cast<NativeNamProcessor*> (instance))
     {
         nativeNamPanel.reset (new NativeNamPanel (*nam, midiLearn, pluginIndex));
         content.addAndMakeVisible (nativeNamPanel.get());
-        rows.clear(); // no generic param rows
         setVisible (true);
         resized();
         return;
     }
 
-
+    juce::Component::SafePointer<ParameterPanel> safe (this);
     const auto& params = instance->getParameters();
     for (int i = 0; i < params.size(); ++i)
     {
         if (auto* p = params[i])
         {
             if (! p->isAutomatable()) continue;
-            auto* row = rows.add (new ParamRow (i, p, midiLearn, pluginIndex));
-            content.addAndMakeVisible (row);
+            auto* cell = cells.add (new ParamKnobCell (
+                i, p, midiLearn, pluginIndex,
+                [safe] (ParamKnobCell* c) { if (safe != nullptr) safe->openMidiMenuFor (c); },
+                [safe] (ParamKnobCell* c) { if (safe != nullptr) safe->openValueEditFor (c); }));
+            content.addAndMakeVisible (cell);
             p->addListener (this);
-            if (! row->isToggle)
-                row->slider.addListener (this);
         }
     }
 
@@ -330,13 +347,11 @@ void ParameterPanel::setPlugin (juce::AudioPluginInstance* instance, int pluginI
 
 void ParameterPanel::clear()
 {
+    closeOverlays();
     if (currentPlugin != nullptr)
-    {
         for (auto* p : currentPlugin->getParameters())
-            if (p != nullptr)
-                p->removeListener (this);
-    }
-    rows.clear();
+            if (p != nullptr) p->removeListener (this);
+    cells.clear();
     nativeNamPanel.reset();
     currentPlugin = nullptr;
     currentPluginIndex = -1;
@@ -345,41 +360,29 @@ void ParameterPanel::clear()
     colourCallback = nullptr;
     openEditorCallback = nullptr;
     titleLabel.setText ({}, juce::dontSendNotification);
-
-    // Reset header so the next plugin never inherits stale MIDI / bypass chrome
     bypassButton.setButtonText ("BYPASS");
-    bypassButton.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
     monoButton.setButtonText ("STEREO");
-    monoButton.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
-    bypassLearnButton.setButtonText ("LEARN");
-    bypassLearnButton.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
-    bypassClearButton.setEnabled (false);
-    bypassClearButton.setAlpha (0.35f);
-    openEditorButton.setEnabled (false);
 }
 
 void ParameterPanel::updateParamValue (int paramIndex, float value)
 {
-    for (auto* row : rows)
-        if (row->paramIndex == paramIndex)
-        {
-            row->setFromNormalised (value);
-            break;
-        }
+    for (auto* c : cells)
+        if (c->paramIndex == paramIndex)
+            c->setFromNormalised (value);
 }
 
 void ParameterPanel::updateBypass (bool bypassed)
 {
     bypassButton.setButtonText (bypassed ? "BYPASSED" : "BYPASS");
-    bypassButton.setColour (juce::TextButton::buttonColourId,
-                            bypassed ? Theme::get().danger : Theme::get().surfaceAlt);
+    if (bypassed)
+        bypassButton.setColour (juce::TextButton::buttonColourId, Theme::get().warning);
+    else
+        styleHeaderButton (bypassButton);
 }
 
 void ParameterPanel::updateMono (bool mono)
 {
     monoButton.setButtonText (mono ? "MONO" : "STEREO");
-    monoButton.setColour (juce::TextButton::buttonColourId,
-                           mono ? Theme::get().accent : Theme::get().surfaceAlt);
 }
 
 void ParameterPanel::parameterValueChanged (int parameterIndex, float newValue)
@@ -387,65 +390,380 @@ void ParameterPanel::parameterValueChanged (int parameterIndex, float newValue)
     juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<ParameterPanel> (this),
                                       parameterIndex, newValue]
     {
-        if (safe != nullptr)
-            safe->updateParamValue (parameterIndex, newValue);
+        if (safe == nullptr) return;
+        safe->updateParamValue (parameterIndex, newValue);
+        // Section masters may have toggled — relayout
+        safe->rebuildGrid();
     });
-}
-
-void ParameterPanel::sliderValueChanged (juce::Slider* s)
-{
-    if (currentPlugin == nullptr) return;
-    for (auto* row : rows)
-    {
-        if (&row->slider == s && row->parameter != nullptr)
-        {
-            const float v = (float) s->getValue();
-            row->parameter->setValueNotifyingHost (v);
-            row->valueLabel.setText (row->parameter->getText (v, 32), juce::dontSendNotification);
-            break;
-        }
-    }
 }
 
 void ParameterPanel::paint (juce::Graphics& g)
 {
     auto& th = Theme::get();
-    g.fillAll (juce::Colours::transparentBlack);
-    g.setColour (th.text.withAlpha (0.10f));
-    g.fillRect (0, 0, getWidth(), 1);
+    g.setColour (th.surface.withAlpha (0.94f));
+    g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (2.0f), 16.0f);
 }
 
 void ParameterPanel::resized()
 {
-    auto r = getLocalBounds().reduced (14, 12);
-    auto top = r.removeFromTop (40).reduced (4, 2);
-    openEditorButton.setBounds (top.removeFromLeft (48));
-    top.removeFromLeft (6);
-    bypassClearButton.setBounds (top.removeFromRight (44));
-    top.removeFromRight (4);
-    bypassLearnButton.setBounds (top.removeFromRight (88));
-    top.removeFromRight (4);
-    monoButton.setBounds (top.removeFromRight (80));
-    top.removeFromRight (4);
-    bypassButton.setBounds (top.removeFromRight (100));
-    top.removeFromRight (6);
-    colourButton.setBounds (top.removeFromRight (80));
-    titleLabel.setBounds (top);
+    auto r = getLocalBounds().reduced (8, 6);
+    auto header = r.removeFromTop (kHeaderH);
+
+    // Left: window-icon UI button
+    openEditorButton.setBounds (header.removeFromLeft (kHeaderH - 4).reduced (2));
+    colourButton.setBounds (header.removeFromLeft (64).reduced (3, 6));
+
+    // Right: STEREO | BYPASS | LEARN | X
+    const int btnH = header.getHeight() - 10;
+    auto placeRight = [&] (juce::TextButton& b, int w)
+    {
+        b.setBounds (header.removeFromRight (w).reduced (3, (header.getHeight() - btnH) / 2));
+    };
+    // LEARN/X removed from header — MIDI for bypass is on the plugin block
+    placeRight (bypassButton, 88);
+    placeRight (monoButton, 78);
+    bypassLearnButton.setVisible (false);
+    bypassClearButton.setVisible (false);
+
+    // Centre: plugin name
+    titleLabel.setBounds (header);
 
     viewport.setBounds (r);
+    viewport.setScrollBarThickness (kScrollBar);
+
     if (nativeNamPanel != nullptr)
     {
-        const int preferredH = nativeNamPanel->getPreferredHeight();
-        content.setSize (viewport.getWidth() - 8, juce::jmax (preferredH, viewport.getHeight()));
-        nativeNamPanel->setBounds (0, 0, content.getWidth(), content.getHeight());
+        content.setSize (juce::jmax (1, viewport.getWidth() - kScrollBar), viewport.getHeight());
+        nativeNamPanel->setBounds (content.getLocalBounds());
         return;
     }
-    const int contentHeight = rows.size() * kRowHeight;
-    content.setSize (viewport.getWidth() - 8, juce::jmax (contentHeight, viewport.getHeight()));
-    int y = 0;
-    for (auto* row : rows)
+
+    rebuildGrid();
+}
+
+
+void ParameterPanel::updateCellVisibility()
+{
+    // Infer "section" masters from * Active / Active * Section toggles.
+    // When a master is off, only the master stays visible; siblings under its prefix hide.
+    struct Master {
+        int index = -1;
+        juce::String prefix; // e.g. "Gate", "Overdrive-1", "Pre FX"
+        bool on = true;
+    };
+    std::vector<Master> masters;
+
+    auto makePrefix = [] (juce::String name) -> juce::String
     {
-        row->setBounds (6, y, content.getWidth() - 12, kRowHeight);
-        y += kRowHeight;
+        name = name.trim();
+        // "Active Pre FX Section" / "Active Amp Section"
+        if (name.startsWithIgnoreCase ("Active "))
+        {
+            name = name.substring (7).trim();
+            if (name.endsWithIgnoreCase (" Section"))
+                name = name.dropLastCharacters (8).trim();
+            return name;
+        }
+        // "Gate Active", "Overdrive-1 Active"
+        if (name.endsWithIgnoreCase (" Active"))
+            return name.dropLastCharacters (7).trim();
+        if (name.endsWithIgnoreCase (" Enable") || name.endsWithIgnoreCase (" Enabled"))
+            return name.upToLastOccurrenceOf (" ", false, false).trim();
+        // "Bypass Pedal", "Bypass Gate" — master when ON hides section (inverted sense)
+        if (name.startsWithIgnoreCase ("Bypass "))
+            return name.fromFirstOccurrenceOf (" ", false, false).trim();
+        // Bare "Gate" toggle is the section master for Gate Threshold / Hard Gate / Attack / Release
+        if (name.equalsIgnoreCase ("Gate"))
+            return "Gate";
+        return {};
+    };
+
+    for (auto* c : cells)
+    {
+        if (c == nullptr || c->parameter == nullptr) continue;
+        if (! c->isToggle) continue;
+        const auto name = c->parameter->getName (64);
+        const auto prefix = makePrefix (name);
+        if (prefix.isEmpty()) continue;
+        Master m;
+        m.index = c->paramIndex;
+        m.prefix = prefix;
+        const auto rawName = c->parameter->getName (64);
+        // Bypass* ON means section is inactive
+        if (rawName.startsWithIgnoreCase ("Bypass "))
+            m.on = c->parameter->getValue() < 0.5f;
+        else
+            m.on = c->parameter->getValue() >= 0.5f;
+        masters.push_back (m);
     }
+
+    // Longer prefixes first so "Overdrive-1" wins over "Overdrive"
+    std::sort (masters.begin(), masters.end(),
+               [] (const Master& a, const Master& b) { return a.prefix.length() > b.prefix.length(); });
+
+    auto isChildOf = [] (const juce::String& paramName, const juce::String& prefix) -> bool
+    {
+        if (prefix.isEmpty()) return false;
+        if (paramName.equalsIgnoreCase (prefix))
+            return false; // the master itself
+        // "Gate Threshold", "Gate Attack"
+        if (paramName.startsWithIgnoreCase (prefix + " "))
+            return true;
+        if (paramName.startsWithIgnoreCase (prefix + "-"))
+            return true;
+        // "Hard Gate" under master "Gate" — prefix appears as a whole word
+        if (prefix.equalsIgnoreCase ("Gate")
+            && paramName.containsWholeWordIgnoreCase ("Gate"))
+            return true;
+        return false;
+    };
+
+    auto isMasterName = [&] (const juce::String& name) -> bool
+    {
+        for (const auto& m : masters)
+        {
+            const auto n = name.trim();
+            if (n.endsWithIgnoreCase (" Active") && n.dropLastCharacters (7).trim().equalsIgnoreCase (m.prefix))
+                return true;
+            if (n.startsWithIgnoreCase ("Active ") && n.containsIgnoreCase (m.prefix))
+                return true;
+        }
+        return false;
+    };
+
+    for (auto* c : cells)
+    {
+        if (c == nullptr || c->parameter == nullptr)
+        {
+            if (c) c->setVisible (true);
+            continue;
+        }
+        const auto name = c->parameter->getName (64);
+        bool visible = true;
+
+        for (const auto& m : masters)
+        {
+            // Never hide the master itself
+            if (c->paramIndex == m.index)
+                continue;
+
+            if (isChildOf (name, m.prefix) ||
+                (name.startsWithIgnoreCase (m.prefix) && name != m.prefix
+                 && ! isMasterName (name)
+                 && (name[m.prefix.length()] == ' ' || name[m.prefix.length()] == '-'
+                     || name.startsWithIgnoreCase (m.prefix + " "))))
+            {
+                // Exclude other masters that share a shorter prefix
+                bool isOtherMaster = false;
+                for (const auto& m2 : masters)
+                    if (m2.index == c->paramIndex) { isOtherMaster = true; break; }
+                if (isOtherMaster) continue;
+
+                if (! m.on)
+                {
+                    visible = false;
+                    break;
+                }
+            }
+        }
+
+        c->setVisible (visible);
+    }
+}
+
+void ParameterPanel::rebuildGrid()
+{
+    updateCellVisibility();
+
+    const int vw = juce::jmax (1, viewport.getWidth() - kScrollBar);
+    const int cols = juce::jmax (1, vw / kCellW);
+    int place = 0;
+    for (auto* c : cells)
+    {
+        if (c == nullptr || ! c->isVisible()) continue;
+        const int col = place % cols;
+        const int row = place / cols;
+        c->setBounds (col * kCellW, row * kCellH, kCellW, kCellH);
+        ++place;
+    }
+    const int rowsN = place > 0 ? (place + cols - 1) / cols : 0;
+    content.setSize (vw, juce::jmax (viewport.getHeight(), rowsN * kCellH + 8));
+}
+
+void ParameterPanel::openMidiMenuFor (ParamKnobCell* cell)
+{
+    if (cell == nullptr) return;
+    closeOverlays();
+    menuTarget = cell;
+
+    auto* pop = new MidiMenuPopup();
+    pop->title.setText (cell->parameter != nullptr ? cell->parameter->getName (40) : "MIDI",
+                        juce::dontSendNotification);
+
+    const bool has = midiLearn.findBinding (cell->pluginIndex, cell->paramIndex) != nullptr;
+    const auto mode = midiLearn.getBindingMode (cell->pluginIndex, cell->paramIndex);
+    pop->modeInstant.setToggleState (mode == MidiLearnManager::MidiMode::Instant, juce::dontSendNotification);
+    pop->modeToggle.setToggleState (mode == MidiLearnManager::MidiMode::Toggle, juce::dontSendNotification);
+    pop->clearBtn.setEnabled (has);
+    pop->clearBtn.setAlpha (has ? 1.0f : 0.4f);
+
+    juce::Component::SafePointer<ParameterPanel> safe (this);
+    juce::Component::SafePointer<ParamKnobCell> safeCell (cell);
+
+    pop->learnBtn.onClick = [safe, safeCell]
+    {
+        if (safe == nullptr || safeCell == nullptr) return;
+        safe->midiLearn.startLearn (safeCell->pluginIndex, safeCell->paramIndex);
+        safe->refreshMidiButtons();
+        safe->closeOverlays();
+    };
+    pop->clearBtn.onClick = [safe, safeCell]
+    {
+        if (safe == nullptr || safeCell == nullptr) return;
+        safe->midiLearn.clearBinding (safeCell->pluginIndex, safeCell->paramIndex);
+        safe->refreshMidiButtons();
+        safe->closeOverlays();
+    };
+    pop->modeInstant.onClick = [safe, safeCell]
+    {
+        if (safe == nullptr || safeCell == nullptr) return;
+        safe->midiLearn.setBindingMode (safeCell->pluginIndex, safeCell->paramIndex,
+                                        MidiLearnManager::MidiMode::Instant);
+    };
+    pop->modeToggle.onClick = [safe, safeCell]
+    {
+        if (safe == nullptr || safeCell == nullptr) return;
+        safe->midiLearn.setBindingMode (safeCell->pluginIndex, safeCell->paramIndex,
+                                        MidiLearnManager::MidiMode::Toggle);
+    };
+    pop->closeBtn.onClick = [safe] { if (safe != nullptr) safe->closeOverlays(); };
+
+    if (auto* parent = getTopLevelComponent())
+    {
+        parent->addAndMakeVisible (pop);
+        pop->setBounds (parent->getLocalBounds());
+        pop->toFront (true);
+    }
+    else
+    {
+        addAndMakeVisible (pop);
+        pop->setBounds (getLocalBounds());
+    }
+    midiPopup.reset (pop);
+}
+
+void ParameterPanel::openBypassMidiMenuFor (int pluginIndex)
+{
+    if (pluginIndex < 0) return;
+    closeOverlays();
+    menuTarget = nullptr;
+
+    auto* pop = new MidiMenuPopup();
+    pop->title.setText ("Plugin Bypass", juce::dontSendNotification);
+
+    const bool has = midiLearn.findBinding (pluginIndex, -2) != nullptr;
+    const auto mode = midiLearn.getBindingMode (pluginIndex, -2);
+    pop->modeInstant.setToggleState (mode == MidiLearnManager::MidiMode::Instant, juce::dontSendNotification);
+    pop->modeToggle.setToggleState (mode == MidiLearnManager::MidiMode::Toggle, juce::dontSendNotification);
+    pop->clearBtn.setEnabled (has);
+    pop->clearBtn.setAlpha (has ? 1.0f : 0.4f);
+
+    juce::Component::SafePointer<ParameterPanel> safe (this);
+    const int pIdx = pluginIndex;
+
+    pop->learnBtn.onClick = [safe, pIdx]
+    {
+        if (safe == nullptr) return;
+        safe->midiLearn.startLearn (pIdx, -2);
+        safe->refreshMidiButtons();
+        safe->closeOverlays();
+    };
+    pop->clearBtn.onClick = [safe, pIdx]
+    {
+        if (safe == nullptr) return;
+        safe->midiLearn.clearBinding (pIdx, -2);
+        safe->refreshMidiButtons();
+        safe->closeOverlays();
+    };
+    pop->modeInstant.onClick = [safe, pIdx]
+    {
+        if (safe == nullptr) return;
+        safe->midiLearn.setBindingMode (pIdx, -2, MidiLearnManager::MidiMode::Instant);
+    };
+    pop->modeToggle.onClick = [safe, pIdx]
+    {
+        if (safe == nullptr) return;
+        safe->midiLearn.setBindingMode (pIdx, -2, MidiLearnManager::MidiMode::Toggle);
+    };
+    pop->closeBtn.onClick = [safe] { if (safe != nullptr) safe->closeOverlays(); };
+
+    midiPopup.reset (pop);
+    if (auto* parent = getTopLevelComponent())
+    {
+        parent->addAndMakeVisible (pop);
+        pop->setBounds (parent->getLocalBounds());
+        pop->toFront (true);
+    }
+    else
+    {
+        addAndMakeVisible (pop);
+        pop->setBounds (getLocalBounds());
+        pop->toFront (true);
+    }
+}
+
+
+void ParameterPanel::openValueEditFor (ParamKnobCell* cell)
+{
+    if (cell == nullptr || cell->parameter == nullptr || cell->isToggle) return;
+    closeOverlays();
+    menuTarget = cell;
+
+    auto* ov = new ValueEditOverlay();
+    ov->titleLab.setText (cell->parameter->getName (32), juce::dontSendNotification);
+    ov->setInitial (cell->parameter->getText (cell->parameter->getValue(), 24));
+
+    juce::Component::SafePointer<ParameterPanel> safe (this);
+    juce::Component::SafePointer<ParamKnobCell> safeCell (cell);
+    ov->onDone = [safe, safeCell] (juce::String text)
+    {
+        if (safe != nullptr)
+            safe->closeOverlays();
+        if (text.isEmpty() || safeCell == nullptr || safeCell->parameter == nullptr)
+            return;
+        const float norm = safeCell->parameter->getValueForText (text);
+        safeCell->parameter->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, norm));
+        safeCell->setFromNormalised (safeCell->parameter->getValue());
+    };
+
+    if (auto* parent = getTopLevelComponent())
+    {
+        parent->addAndMakeVisible (ov);
+        ov->setBounds (parent->getLocalBounds());
+        ov->toFront (true);
+        juce::MessageManager::callAsync ([ed = &ov->editor] { ed->grabKeyboardFocus(); });
+    }
+    else
+    {
+        addAndMakeVisible (ov);
+        ov->setBounds (getLocalBounds());
+    }
+    valueOverlay.reset (ov);
+}
+
+void ParameterPanel::closeOverlays()
+{
+    if (valueOverlay != nullptr)
+    {
+        if (auto* p = valueOverlay->getParentComponent())
+            p->removeChildComponent (valueOverlay.get());
+        valueOverlay.reset();
+    }
+    if (midiPopup != nullptr)
+    {
+        if (auto* p = midiPopup->getParentComponent())
+            p->removeChildComponent (midiPopup.get());
+        midiPopup.reset();
+    }
+    menuTarget = nullptr;
 }

@@ -94,6 +94,11 @@ MainComponent::MainComponent()
     addAndMakeVisible (tabPedal);
     addAndMakeVisible (tabTuner);
 
+    tunerMidiBtn.setButtonText ("MIDI");
+    Theme::get().applyButton (tunerMidiBtn, false);
+    tunerMidiBtn.onClick = [this] { openTunerMidiPopup(); };
+    addChildComponent (tunerMidiBtn);
+
     blocksViewport.setViewedComponent (&blocksContent, false);
     blocksContent.addMouseListener (this, true); // clicks on empty board deselect
     blocksViewport.setScrollBarsShown (false, true);
@@ -287,6 +292,7 @@ void MainComponent::setTab (int tab)
     blocksViewport.setVisible (board);
     if (parameterPanel) parameterPanel->setVisible (board && selectedIndex >= 0);
     if (tuner) tuner->setVisible (! board);
+    tunerMidiBtn.setVisible (! board);
     if (board)
         audioEngine.setMuted (false);
     else if (tuner != nullptr)
@@ -303,7 +309,9 @@ void MainComponent::setTab (int tab)
 void MainComponent::handleGlobalMidi (const juce::String& action, float value)
 {
     if (action == "tuner")
-        setTab (value >= 0.5f ? 1 : 0); // absolute: ON = tuner, OFF = board
+        setTab (value >= 0.5f ? 1 : 0); // absolute Instant/Hold
+    else if (action == "tunerToggle")
+        setTab (currentTab == 0 ? 1 : 0); // Toggle mode pulse
     else if (action == "presetNext")
         presetNext();
     else if (action == "presetPrev")
@@ -545,6 +553,7 @@ void MainComponent::resized()
 
     if (currentTab == 0)
     {
+        tunerMidiBtn.setVisible (false);
         // Side faders only on board view
         auto left  = r.removeFromLeft (kSideW);
         auto right = r.removeFromRight (kSideW);
@@ -712,6 +721,11 @@ void MainComponent::resized()
         outLabel.setVisible (false);
         inputFader.setVisible (false);
         outputFader.setVisible (false);
+        // MIDI button centred under the tuner display
+        auto midiRow = r.removeFromBottom (52);
+        const int bw = juce::jmin (160, midiRow.getWidth() / 3);
+        tunerMidiBtn.setBounds (midiRow.withSizeKeepingCentre (bw, 44));
+        tunerMidiBtn.setVisible (true);
         if (tuner)
             tuner->setBounds (r);
         if (parameterPanel)
@@ -795,6 +809,11 @@ void MainComponent::rebuildBlocks()
             rebuildBlocks();
             if (parameterPanel && selectedIndex == idx)
                 parameterPanel->updateBypass (audioEngine.getPluginChain().isBypassed (idx));
+        };
+        block->onBypassMidiRequested = [this] (int idx)
+        {
+            if (parameterPanel != nullptr)
+                parameterPanel->openBypassMidiMenuFor (idx);
         };
         block->onDoubleTap = [this] (int idx) { showPluginEditor (idx); };
         block->onColourRequested = [this] (int idx) { cycleBlockColour (idx); };
@@ -1225,6 +1244,7 @@ void MainComponent::showPresetNameDialog (const juce::String& title,
             editor.setFont (f);
             editor.setText (shared->text, false);
             editor.applyFontToAllText (f);
+            editor.selectAll();
             editor.setColour (juce::TextEditor::textColourId, th.text);
             editor.setColour (juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
             editor.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
@@ -1232,7 +1252,7 @@ void MainComponent::showPresetNameDialog (const juce::String& title,
             editor.setColour (juce::TextEditor::highlightColourId, th.accent.withAlpha (0.35f));
             editor.setColour (juce::CaretComponent::caretColourId, th.accent);
             editor.setMultiLine (false);
-            editor.setSelectAllWhenFocused (true);
+            editor.setSelectAllWhenFocused (false); // only selectAll once below
             editor.setWantsKeyboardFocus (true);
             editor.setJustification (juce::Justification::centred);
             editor.onTextChange = [this]
@@ -1250,21 +1270,11 @@ void MainComponent::showPresetNameDialog (const juce::String& title,
             addAndMakeVisible (cancelBtn);
 
             addAndMakeVisible (keyboard);
-            keyboard.onKey = [this] (juce::String s)
+            keyboard.attachEditor (&editor);
+            // Editor owns caret/selection; only sync shared buffer from the field
+            keyboard.onKey = [this] (juce::String)
             {
-                if (s == "\b")
-                {
-                    if (shared->text.isNotEmpty())
-                        shared->text = shared->text.dropLastCharacters (1);
-                }
-                else if (s.isNotEmpty() && s != "\n")
-                {
-                    shared->text += s;
-                }
-                const juce::Font f2 (juce::FontOptions (28.0f, juce::Font::bold));
-                editor.setText (shared->text, false);
-                editor.applyFontToAllText (f2);
-                editor.setCaretPosition (shared->text.length());
+                shared->text = editor.getText();
             };
             keyboard.onEnter = [this] { finish (true); };
 
@@ -2051,4 +2061,126 @@ void MainComponent::timerCallback()
     repaint();
     if (parameterPanel && audioEngine.getMidiLearnManager().isLearning())
         parameterPanel->repaint();
+}
+
+
+void MainComponent::openTunerMidiPopup()
+{
+    // Lightweight overlay matching ParameterPanel MIDI popup
+    class GlobalMidiPopup : public juce::Component
+    {
+    public:
+        GlobalMidiPopup()
+        {
+            auto& th = Theme::get();
+            setLookAndFeel (&th.softLaf);
+            title.setText ("Tuner Tab", juce::dontSendNotification);
+            title.setJustificationType (juce::Justification::centred);
+            title.setFont (juce::FontOptions (18.0f, juce::Font::bold));
+            title.setColour (juce::Label::textColourId, th.text);
+            addAndMakeVisible (title);
+            auto prep = [&] (juce::TextButton& b, bool primary = false)
+            {
+                b.setLookAndFeel (&th.softLaf);
+                th.applyButton (b, primary);
+            };
+            prep (learnBtn, true); prep (clearBtn, false);
+            prep (modeInstant, false); prep (modeToggle, false); prep (closeBtn, false);
+            modeInstant.setClickingTogglesState (true);
+            modeToggle.setClickingTogglesState (true);
+            modeInstant.setRadioGroupId (9901);
+            modeToggle.setRadioGroupId (9901);
+            modeInstant.setColour (juce::TextButton::buttonOnColourId, th.accent);
+            modeToggle.setColour (juce::TextButton::buttonOnColourId, th.accent);
+            learnBtn.setButtonText ("LEARN");
+            clearBtn.setButtonText ("Clear MIDI");
+            modeInstant.setButtonText ("Instant / Hold");
+            modeToggle.setButtonText ("Toggle");
+            closeBtn.setButtonText ("Close");
+            for (auto* b : { &learnBtn, &clearBtn, &modeInstant, &modeToggle, &closeBtn })
+                addAndMakeVisible (b);
+        }
+        ~GlobalMidiPopup() override
+        {
+            setLookAndFeel (nullptr);
+            for (auto* b : { &learnBtn, &clearBtn, &modeInstant, &modeToggle, &closeBtn })
+                b->setLookAndFeel (nullptr);
+        }
+        void paint (juce::Graphics& g) override
+        {
+            auto& th = Theme::get();
+            g.fillAll (th.overlay);
+            auto card = getLocalBounds().withSizeKeepingCentre (
+                juce::jmin (340, getWidth() - 32), juce::jmin (360, getHeight() - 32)).toFloat();
+            g.setColour (th.surface);
+            g.fillRoundedRectangle (card, 20.0f);
+        }
+        void resized() override
+        {
+            auto c = getLocalBounds().withSizeKeepingCentre (
+                juce::jmin (340, getWidth() - 32), juce::jmin (360, getHeight() - 32)).reduced (18);
+            title.setBounds (c.removeFromTop (40));
+            c.removeFromTop (6);
+            auto slot = [&] (juce::TextButton& b) { b.setBounds (c.removeFromTop (46).reduced (0, 4)); };
+            slot (learnBtn); slot (clearBtn);
+            c.removeFromTop (10);
+            slot (modeInstant); slot (modeToggle);
+            closeBtn.setBounds (c.removeFromBottom (46).reduced (0, 4));
+        }
+        juce::Label title;
+        juce::TextButton learnBtn, clearBtn, closeBtn, modeInstant, modeToggle;
+    };
+
+    auto* pop = new GlobalMidiPopup();
+    auto& learn = audioEngine.getMidiLearnManager();
+    const bool has = learn.findGlobal ("tuner") != nullptr;
+    // Mode stored on binding if present
+    MidiLearnManager::MidiMode mode = MidiLearnManager::MidiMode::Instant;
+    if (auto* b = learn.findGlobal ("tuner"))
+        mode = b->mode;
+    pop->modeInstant.setToggleState (mode == MidiLearnManager::MidiMode::Instant, juce::dontSendNotification);
+    pop->modeToggle.setToggleState (mode == MidiLearnManager::MidiMode::Toggle, juce::dontSendNotification);
+    pop->clearBtn.setEnabled (has);
+    pop->clearBtn.setAlpha (has ? 1.0f : 0.4f);
+
+    juce::Component::SafePointer<MainComponent> safe (this);
+    juce::Component::SafePointer<GlobalMidiPopup> safePop (pop);
+
+    pop->learnBtn.onClick = [safe, safePop]
+    {
+        if (safe == nullptr) return;
+        safe->audioEngine.getMidiLearnManager().startLearnGlobal ("tuner");
+        if (safePop != nullptr) safePop->setVisible (false);
+        juce::MessageManager::callAsync ([safePop] { if (safePop != nullptr) delete safePop.getComponent(); });
+    };
+    pop->clearBtn.onClick = [safe, safePop]
+    {
+        if (safe == nullptr) return;
+        safe->audioEngine.getMidiLearnManager().clearGlobal ("tuner");
+        if (safePop != nullptr) safePop->setVisible (false);
+        juce::MessageManager::callAsync ([safePop] { if (safePop != nullptr) delete safePop.getComponent(); });
+    };
+    pop->modeInstant.onClick = [safe]
+    {
+        if (safe == nullptr) return;
+        if (auto* b = safe->audioEngine.getMidiLearnManager().findGlobal ("tuner"))
+            b->mode = MidiLearnManager::MidiMode::Instant;
+        safe->audioEngine.getMidiLearnManager().saveGlobalsToSettings();
+    };
+    pop->modeToggle.onClick = [safe]
+    {
+        if (safe == nullptr) return;
+        if (auto* b = safe->audioEngine.getMidiLearnManager().findGlobal ("tuner"))
+            b->mode = MidiLearnManager::MidiMode::Toggle;
+        safe->audioEngine.getMidiLearnManager().saveGlobalsToSettings();
+    };
+    pop->closeBtn.onClick = [safePop]
+    {
+        if (safePop != nullptr) safePop->setVisible (false);
+        juce::MessageManager::callAsync ([safePop] { if (safePop != nullptr) delete safePop.getComponent(); });
+    };
+
+    addAndMakeVisible (pop);
+    pop->setBounds (getLocalBounds());
+    pop->toFront (true);
 }

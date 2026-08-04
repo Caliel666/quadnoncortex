@@ -52,16 +52,6 @@ public:
         g.fillRoundedRectangle (bounds.translated (0.0f, shouldDrawButtonAsDown ? 1.0f : 0.0f), radius);
     }
 
-    void drawButtonText (juce::Graphics& g, juce::TextButton& button,
-                         bool, bool) override
-    {
-        g.setColour (button.findColour (juce::TextButton::textColourOffId));
-        const float fs = juce::jlimit (12.0f, 36.0f, button.getHeight() * 0.55f);
-        g.setFont (juce::Font (juce::FontOptions (fs, juce::Font::bold)));
-        g.drawText (button.getButtonText(), button.getLocalBounds(),
-                    juce::Justification::centred, false);
-    }
-
     void drawComboBox (juce::Graphics& g, int width, int height, bool,
                        int, int, int, int, juce::ComboBox& box) override
     {
@@ -210,8 +200,31 @@ public:
 
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override
     {
-        return juce::Font (juce::FontOptions (juce::jlimit (13.0f, 28.0f, buttonHeight * 0.45f),
+        // Keep label inside short/wide touch buttons (header, settings, etc.)
+        return juce::Font (juce::FontOptions (juce::jlimit (11.0f, 18.0f, buttonHeight * 0.32f),
                                               juce::Font::bold));
+    }
+
+    void drawButtonText (juce::Graphics& g, juce::TextButton& button,
+                         bool, bool) override
+    {
+        auto font = getTextButtonFont (button, button.getHeight());
+        const auto text = button.getButtonText();
+        auto area = button.getLocalBounds().reduced (6, 2);
+        // Shrink until the string fits the button width
+        auto textWidth = [&] (const juce::Font& f)
+        {
+            juce::GlyphArrangement ga;
+            ga.addLineOfText (f, text, 0.0f, 0.0f);
+            return ga.getBoundingBox (0, -1, true).getWidth();
+        };
+        while (textWidth (font) > (float) area.getWidth() && font.getHeight() > 10.0f)
+            font = font.withHeight (font.getHeight() - 1.0f);
+        g.setFont (font);
+        g.setColour (button.findColour (button.getToggleState() ? juce::TextButton::textColourOnId
+                                                                : juce::TextButton::textColourOffId)
+                         .withMultipliedAlpha (button.isEnabled() ? 1.0f : 0.5f));
+        g.drawText (text, area, juce::Justification::centred, false);
     }
 
     juce::Font getPopupMenuFont() override

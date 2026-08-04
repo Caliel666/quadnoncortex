@@ -51,6 +51,7 @@ private:
     void updatePresetNameDisplay();
     void showPresetPickerOverlay();
     void handleGlobalMidi (const juce::String& action, float value);
+    void openTunerMidiPopup();
     void openSettings();
     void cycleBlockColour (int index);
     void paintMeter (juce::Graphics& g, juce::Rectangle<int> area, float peak);
@@ -82,6 +83,7 @@ private:
 
     juce::TextButton tabPedal { "BOARD" };
     juce::TextButton tabTuner { "TUNER" };
+    juce::TextButton tunerMidiBtn { "MIDI" };
     int currentTab = 0;
 
     juce::Viewport blocksViewport;

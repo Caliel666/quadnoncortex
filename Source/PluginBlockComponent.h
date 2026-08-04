@@ -18,6 +18,7 @@ public:
 
     std::function<void(int)> onSelected;
     std::function<void(int)> onBypassToggled;
+    std::function<void(int)> onBypassMidiRequested; // long-press bypass for MIDI
     std::function<void(int)> onDoubleTap;
     std::function<void(int)> onColourRequested;
     std::function<void(int)> onDragStarted;

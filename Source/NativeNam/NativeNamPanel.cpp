@@ -1,197 +1,149 @@
 #include "NativeNamPanel.h"
 #include "Theme.h"
 
+
+
 //==============================================================================
 NativeNamPanel::ControlRow::ControlRow (const juce::String& name, juce::AudioProcessorParameter* param,
                                         MidiLearnManager& mgr, int pluginIdx, int paramIdx,
-                                        bool showMidiButtons)
+                                        std::function<void(ControlRow*)> onMidi,
+                                        std::function<void(ControlRow*)> onValue)
     : parameter (param), learnManager (mgr), pluginIndex (pluginIdx), paramIndex (paramIdx),
-      showMidi (showMidiButtons)
+      openMidi (std::move (onMidi)), openValue (std::move (onValue))
 {
     auto& th = Theme::get();
+    isToggle = (dynamic_cast<juce::AudioParameterBool*> (param) != nullptr);
+    if (param != nullptr)
+        defaultNorm = param->getDefaultValue();
 
-    // Name label
     nameLabel.setText (name, juce::dontSendNotification);
-    nameLabel.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+    nameLabel.setFont (juce::FontOptions (12.5f, juce::Font::bold));
     nameLabel.setColour (juce::Label::textColourId, th.text);
+    nameLabel.setJustificationType (juce::Justification::centred);
+    nameLabel.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (nameLabel);
 
-    // Value label (shows current value)
-    valueLabel.setFont (juce::FontOptions (14.0f));
-    valueLabel.setColour (juce::Label::textColourId, th.textDim);
-    valueLabel.setJustificationType (juce::Justification::centredRight);
-    if (param != nullptr)
-        valueLabel.setText (param->getText (param->getValue(), 32), juce::dontSendNotification);
+    valueLabel.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    valueLabel.setColour (juce::Label::textColourId, th.accent);
+    valueLabel.setJustificationType (juce::Justification::centred);
+    valueLabel.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (valueLabel);
 
-    isToggle = (dynamic_cast<juce::AudioParameterBool*> (param) != nullptr);
+    resetBtn.setButtonText (juce::String::fromUTF8 ("\xe2\x86\xba")); // ↺
+    resetBtn.setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+    resetBtn.setColour (juce::TextButton::textColourOffId, th.textDim);
+    resetBtn.onClick = [this]
+    {
+        if (parameter == nullptr) return;
+        parameter->setValueNotifyingHost (defaultNorm);
+        syncFromParam();
+    };
+    addAndMakeVisible (resetBtn);
 
     if (isToggle)
     {
-        toggle.setButtonText (name); // toggle shows its own label
-        toggle.setToggleState (param->getValue() >= 0.5f, juce::dontSendNotification);
-        toggle.onClick = [this]
+        switchToggle.onChange = [this] (bool on)
         {
-            if (parameter != nullptr)
-                parameter->setValueNotifyingHost (toggle.getToggleState() ? 1.0f : 0.0f);
+            if (parameter == nullptr) return;
+            parameter->setValueNotifyingHost (on ? 1.0f : 0.0f);
+            syncFromParam();
         };
-        addAndMakeVisible (toggle);
-        // Hide name/value when using toggle (toggle has its own text)
-        nameLabel.setVisible (false);
-        valueLabel.setVisible (false);
+        addAndMakeVisible (switchToggle);
+        knob.setVisible (false);
+        resetBtn.setVisible (false);
     }
     else
     {
-        slider.setSliderStyle (juce::Slider::LinearHorizontal);
-        slider.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
-        slider.setColour (juce::Slider::thumbColourId, th.accent);
-        slider.setColour (juce::Slider::trackColourId, th.accent);
-        slider.setColour (juce::Slider::backgroundColourId, th.surfaceAlt);
-        if (auto* pf = dynamic_cast<juce::AudioParameterFloat*> (param))
-        {
-            auto r = pf->getNormalisableRange();
-            slider.setRange ((double) r.start, (double) r.end, (double) juce::jmax (0.01f, r.interval));
-            slider.setValue ((double) pf->get(), juce::dontSendNotification);
-            slider.onValueChange = [this]
-            {
-                if (parameter == nullptr) return;
-                *dynamic_cast<juce::AudioParameterFloat*> (parameter) = (float) slider.getValue();
-                valueLabel.setText (parameter->getText (parameter->getValue(), 32),
-                                   juce::dontSendNotification);
-            };
-        }
-        else
-        {
-            slider.setRange (0.0, 1.0, 0.01);
-            slider.setValue ((double) param->getValue(), juce::dontSendNotification);
-            slider.onValueChange = [this]
-            {
-                if (parameter == nullptr) return;
-                parameter->setValueNotifyingHost ((float) slider.getValue());
-                valueLabel.setText (parameter->getText (parameter->getValue(), 32),
-                                   juce::dontSendNotification);
-            };
-        }
-        addAndMakeVisible (slider);
+        knob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+        knob.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+        knob.setRange (0.0, 1.0, 0.0);
+        knob.setRotaryParameters (juce::MathConstants<float>::pi * 1.2f,
+                                  juce::MathConstants<float>::pi * 2.8f, true);
+        knob.setColour (juce::Slider::rotarySliderFillColourId, th.accent);
+        knob.setColour (juce::Slider::rotarySliderOutlineColourId, th.surfaceAlt);
+        knob.setColour (juce::Slider::thumbColourId, juce::Colours::white);
+        knob.addListener (this);
+        addAndMakeVisible (knob);
+        switchToggle.setVisible (false);
     }
-
-    // MIDI learn buttons — only added when showMidi is true
-    if (showMidi)
-    {
-        th.applyButton (learnBtn);
-        learnBtn.onClick = [this]
-        {
-            if (learnManager.isLearning()) learnManager.cancelLearn();
-            else learnManager.startLearn (pluginIndex, paramIndex);
-            updateLearnButton();
-        };
-        addAndMakeVisible (learnBtn);
-
-        th.applyButton (clearBtn);
-        clearBtn.onClick = [this]
-        {
-            learnManager.clearBinding (pluginIndex, paramIndex);
-            updateLearnButton();
-        };
-        addAndMakeVisible (clearBtn);
-    }
-    updateLearnButton();
-}
-
-void NativeNamPanel::ControlRow::updateLearnButton()
-{
-    const bool hasMidi = learnManager.findBinding (pluginIndex, paramIndex) != nullptr;
-    const bool learningThis = learnManager.isLearning()
-                              && learnManager.getLearnPlugin() == pluginIndex
-                              && learnManager.getLearnParam() == paramIndex;
-    if (learningThis)
-    {
-        learnBtn.setButtonText ("...");
-        learnBtn.setColour (juce::TextButton::buttonColourId, Theme::get().warning);
-    }
-    else if (hasMidi)
-    {
-        learnBtn.setButtonText ("MIDI");
-        learnBtn.setColour (juce::TextButton::buttonColourId, Theme::get().success);
-    }
-    else
-    {
-        learnBtn.setButtonText ("LEARN");
-        learnBtn.setColour (juce::TextButton::buttonColourId, Theme::get().surfaceAlt);
-    }
-    clearBtn.setEnabled (hasMidi);
-    clearBtn.setAlpha (hasMidi ? 1.0f : 0.35f);
-}
-
-void NativeNamPanel::ControlRow::syncFromParam()
-{
-    if (parameter == nullptr) return;
-    if (isToggle)
-        toggle.setToggleState (parameter->getValue() >= 0.5f, juce::dontSendNotification);
-    else if (auto* pf = dynamic_cast<juce::AudioParameterFloat*> (parameter))
-    {
-        slider.setValue ((double) pf->get(), juce::dontSendNotification);
-        valueLabel.setText (parameter->getText (parameter->getValue(), 32),
-                           juce::dontSendNotification);
-    }
+    syncFromParam();
 }
 
 void NativeNamPanel::ControlRow::paint (juce::Graphics& g)
 {
     auto& th = Theme::get();
-    // Subtle card background with rounded corners
-    g.setColour (th.surfaceAlt.withAlpha (0.35f));
-    g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f), 6.0f);
+    auto r = getLocalBounds().toFloat().reduced (3.0f);
+    g.setColour (th.surface.withAlpha (0.55f));
+    g.fillRoundedRectangle (r, 14.0f);
 }
 
 void NativeNamPanel::ControlRow::resized()
 {
-    // Match ParameterPanel::ParamRow proportions — tall touch-friendly rows
+    // Match ParameterPanel cells: name top, control centre, value left / reset right
     auto r = getLocalBounds().reduced (8, 6);
-
+    nameLabel.setBounds (r.removeFromTop (22));
+    auto bot = r.removeFromBottom (26);
+    if (! isToggle)
+        resetBtn.setBounds (bot.removeFromRight (26));
+    valueLabel.setBounds (bot); // left-aligned under dial
+    valueLabel.setJustificationType (juce::Justification::centredLeft);
+    // Keep dial / switch centred in remaining area (aligned under name)
     if (isToggle)
+        switchToggle.setBounds (r.withSizeKeepingCentre (56, 32));
+    else
+        knob.setBounds (r.withSizeKeepingCentre (juce::jmin (r.getWidth(), r.getHeight()) - 4,
+                                                 juce::jmin (r.getWidth(), r.getHeight()) - 4));
+}
+
+void NativeNamPanel::ControlRow::sliderValueChanged (juce::Slider*)
+{
+    if (parameter == nullptr) return;
+    parameter->setValueNotifyingHost ((float) knob.getValue());
+    valueLabel.setText (parameter->getText ((float) knob.getValue(), 24), juce::dontSendNotification);
+    updateLearnButton();
+}
+
+void NativeNamPanel::ControlRow::syncFromParam()
+{
+    if (parameter == nullptr) return;
+    const float v = parameter->getValue();
+    if (isToggle)
+        switchToggle.setOn (v >= 0.5f, juce::dontSendNotification);
+    else
+        knob.setValue ((double) v, juce::dontSendNotification);
+    valueLabel.setText (parameter->getText (v, 24), juce::dontSendNotification);
+    updateLearnButton();
+}
+
+void NativeNamPanel::ControlRow::updateLearnButton()
+{
+    auto& th = Theme::get();
+    const bool has = learnManager.findBinding (pluginIndex, paramIndex) != nullptr;
+    const bool learning = learnManager.isLearning()
+                          && learnManager.getLearnPlugin() == pluginIndex
+                          && learnManager.getLearnParam() == paramIndex;
+    if (learning)
+        nameLabel.setColour (juce::Label::textColourId, th.warning);
+    else if (has)
+        nameLabel.setColour (juce::Label::textColourId, th.success);
+    else
+        nameLabel.setColour (juce::Label::textColourId, th.text);
+}
+
+void NativeNamPanel::ControlRow::mouseDown (const juce::MouseEvent& e)
+{
+    if (nameLabel.getBounds().contains (e.getPosition()))
     {
-        if (showMidi)
-        {
-            const int btnH = juce::jmin (44, r.getHeight());
-            const int btnY = r.getY() + (r.getHeight() - btnH) / 2;
-            clearBtn.setBounds (r.removeFromRight (44).withHeight (btnH).withY (btnY));
-            r.removeFromRight (6);
-            learnBtn.setBounds (r.removeFromRight (88).withHeight (btnH).withY (btnY));
-            r.removeFromRight (8);
-            toggle.setBounds (r);
-        }
-        else
-        {
-            toggle.setBounds (r);
-        }
+        if (openMidi) openMidi (this);
         return;
     }
-
-    // Name on top-left, value on top-right (same as ParamRow)
-    auto topRow = r.removeFromTop (22);
-    valueLabel.setBounds (topRow.removeFromRight (90));
-    nameLabel.setBounds (topRow);
-
-    r.removeFromTop (4);
-
-    if (showMidi)
+    if (valueLabel.getBounds().contains (e.getPosition()) && ! isToggle)
     {
-        const int btnH = juce::jmin (40, r.getHeight());
-        const int btnY = r.getY() + (r.getHeight() - btnH) / 2;
-        clearBtn.setBounds (r.removeFromRight (44).withHeight (btnH).withY (btnY));
-        r.removeFromRight (6);
-        learnBtn.setBounds (r.removeFromRight (88).withHeight (btnH).withY (btnY));
-        r.removeFromRight (8);
-        slider.setBounds (r);
-    }
-    else
-    {
-        slider.setBounds (r);
+        if (openValue) openValue (this);
+        return;
     }
 }
 
-//==============================================================================
 NativeNamPanel::NativeNamPanel (NativeNamProcessor& proc, MidiLearnManager& learnMgr, int pluginIdx)
     : juce::AudioProcessorEditor (proc),
       processor (proc), midiLearn (learnMgr), pluginIndex (pluginIdx)
@@ -256,10 +208,13 @@ NativeNamPanel::NativeNamPanel (NativeNamProcessor& proc, MidiLearnManager& lear
     // Param indices match add order in NativeNamProcessor ctor:
     // 0 input, 1 output, 2 byp pedal, 3 byp amp, 4 byp cab, 5 lite,
     // 6 pedal mix, 7 amp gain, 8 amp low, 9 amp mid, 10 amp high
-    auto makeRow = [this] (const juce::String& name, juce::AudioProcessorParameter* p, int idx,
-                          bool midi = false)
+        auto makeRow = [this] (const juce::String& name, juce::AudioProcessorParameter* p, int idx,
+                           bool = false)
     {
-        auto row = std::make_unique<ControlRow> (name, p, midiLearn, pluginIndex, idx, midi);
+        auto row = std::make_unique<ControlRow> (
+            name, p, midiLearn, pluginIndex, idx,
+            [this] (ControlRow* c) { openMidiFor (c); },
+            [this] (ControlRow* c) { openValueFor (c); });
         configPage.addAndMakeVisible (row.get());
         return row;
     };
@@ -275,14 +230,16 @@ NativeNamPanel::NativeNamPanel (NativeNamProcessor& proc, MidiLearnManager& lear
     inGainRow      = makeRow ("Input",        processor.inputGainParam,   0);
     outGainRow     = makeRow ("Output",       processor.outputGainParam,  1);
 
-    // Lite applies slim size
+    // Lite applies slim size when the switch changes
     if (liteRow != nullptr)
     {
-        // re-hook toggle to also apply slim
-        liteRow->toggle.onClick = [this]
+        liteRow->switchToggle.onChange = [this] (bool on)
         {
-            *processor.liteModeParam = liteRow->toggle.getToggleState();
+            if (processor.liteModeParam != nullptr)
+                processor.liteModeParam->setValueNotifyingHost (on ? 1.0f : 0.0f);
             processor.applySlimMode();
+            if (liteRow != nullptr)
+                liteRow->syncFromParam();
         };
     }
 
@@ -522,9 +479,9 @@ void NativeNamPanel::applyTheme()
     {
         if (r == nullptr) continue;
         r->nameLabel.setColour (juce::Label::textColourId, th.text);
-        r->valueLabel.setColour (juce::Label::textColourId, th.textDim);
-        th.applyButton (r->learnBtn);
-        th.applyButton (r->clearBtn);
+        r->valueLabel.setColour (juce::Label::textColourId, th.accent);
+        r->knob.setColour (juce::Slider::rotarySliderFillColourId, th.accent);
+        r->knob.setColour (juce::Slider::rotarySliderOutlineColourId, th.surfaceAlt);
         r->updateLearnButton();
     }
     repaint();
@@ -540,6 +497,18 @@ void NativeNamPanel::timerCallback()
                      pedalMixRow.get(), ampGainRow.get(), ampLowRow.get(), ampMidRow.get(),
                      ampHighRow.get(), liteRow.get(), inGainRow.get(), outGainRow.get() })
         if (r != nullptr) r->syncFromParam();
+
+    // Relayout when section bypass toggles (collapse / expand controls)
+    static int lastBypassBits = -1;
+    const int bits = ((processor.bypassPedalParam && processor.bypassPedalParam->get() >= 0.5f) ? 1 : 0)
+                   | ((processor.bypassAmpParam   && processor.bypassAmpParam->get()   >= 0.5f) ? 2 : 0)
+                   | ((processor.bypassCabParam   && processor.bypassCabParam->get()   >= 0.5f) ? 4 : 0);
+    if (bits != lastBypassBits)
+    {
+        lastBypassBits = bits;
+        resized();
+    }
+
     if ((tick % 8) == 0)
         refreshMidiButtons();
 }
@@ -806,55 +775,65 @@ void NativeNamPanel::resized()
     if (currentTab == 0)
     {
         configPage.setBounds (r);
-        auto m = configPage.getLocalBounds().reduced (4);
+        auto area = configPage.getLocalBounds().reduced (6);
 
-        // Three columns for slots
-        const int colW = m.getWidth() / 3;
-        auto pedalCol = m.removeFromLeft (colW).reduced (4);
-        auto ampCol   = m.removeFromLeft (colW).reduced (4);
-        auto cabCol   = m.reduced (4);
-
-        auto layoutSlotHeader = [] (juce::Rectangle<int>& c, juce::Label& title, juce::Label& name,
+        auto header = area.removeFromTop (96);
+        const int colW = header.getWidth() / 3;
+        auto layoutSlotHeader = [] (juce::Rectangle<int> c, juce::Label& title, juce::Label& name,
                                     juce::TextButton& load, juce::TextButton& clear)
         {
-            title.setBounds (c.removeFromTop (20));
-            name.setBounds (c.removeFromTop (40));
-            auto row = c.removeFromTop (40);
-            clear.setBounds (row.removeFromRight (40).reduced (2));
-            load.setBounds (row.reduced (2));
-            c.removeFromTop (4);
+            title.setBounds (c.removeFromTop (18));
+            name.setBounds (c.removeFromTop (22));
+            auto row = c.removeFromTop (36);
+            clear.setBounds (row.removeFromRight (36).reduced (2));
+            load.setBounds (row.reduced (2, 2));
         };
-        layoutSlotHeader (pedalCol, pedalTitle, pedalName, pedalBtn, pedalClear);
-        layoutSlotHeader (ampCol,   ampTitle,   ampName,   ampBtn,   ampClear);
-        layoutSlotHeader (cabCol,   cabTitle,   cabName,   cabBtn,   cabClear);
+        layoutSlotHeader (header.removeFromLeft (colW).reduced (4, 0),
+                          pedalTitle, pedalName, pedalBtn, pedalClear);
+        layoutSlotHeader (header.removeFromLeft (colW).reduced (4, 0),
+                          ampTitle, ampName, ampBtn, ampClear);
+        layoutSlotHeader (header.reduced (4, 0),
+                          cabTitle, cabName, cabBtn, cabClear);
 
-        auto placeRow = [] (juce::Rectangle<int>& c, ControlRow* row)
+        area.removeFromTop (6);
+
+        const bool pedalOn = processor.bypassPedalParam == nullptr
+                             || processor.bypassPedalParam->get() < 0.5f;
+        const bool ampOn   = processor.bypassAmpParam == nullptr
+                             || processor.bypassAmpParam->get() < 0.5f;
+        const bool cabOn   = processor.bypassCabParam == nullptr
+                             || processor.bypassCabParam->get() < 0.5f;
+
+        struct Item { ControlRow* row; bool vis; };
+        const Item items[] = {
+            { bypassPedalRow.get(), true },
+            { pedalMixRow.get(),    pedalOn },
+            { bypassAmpRow.get(),   true },
+            { ampGainRow.get(),     ampOn },
+            { ampLowRow.get(),      ampOn },
+            { ampMidRow.get(),      ampOn },
+            { ampHighRow.get(),     ampOn },
+            { bypassCabRow.get(),   true },
+            { liteRow.get(),        true },
+            { inGainRow.get(),      true },
+            { outGainRow.get(),     true },
+        };
+
+        constexpr int cellW = 152;
+        constexpr int cellH = 176;
+        const int cols = juce::jmax (1, area.getWidth() / cellW);
+        int x = 0, y = 0;
+        for (const auto& it : items)
         {
-            if (row != nullptr)
-            {
-                // Match ParameterPanel row height (kRowHeight = 96) for touch
-                const int h = row->isToggle ? 56 : 88;
-                row->setBounds (c.removeFromTop (h).reduced (0, 3));
-            }
-        };
-
-        // Under each column
-        placeRow (pedalCol, bypassPedalRow.get());
-        placeRow (pedalCol, pedalMixRow.get());
-
-        placeRow (ampCol, bypassAmpRow.get());
-        placeRow (ampCol, ampGainRow.get());
-        placeRow (ampCol, ampLowRow.get());
-        placeRow (ampCol, ampMidRow.get());
-        placeRow (ampCol, ampHighRow.get());
-
-        placeRow (cabCol, bypassCabRow.get());
-
-        // Global settings below the columns (tall rows)
-        auto global = configPage.getLocalBounds().removeFromBottom (280).reduced (8, 4);
-        placeRow (global, liteRow.get());
-        placeRow (global, inGainRow.get());
-        placeRow (global, outGainRow.get());
+            if (it.row == nullptr) continue;
+            it.row->setVisible (it.vis);
+            if (! it.vis) continue;
+            if (x >= cols) { x = 0; ++y; }
+            it.row->setBounds (area.getX() + x * cellW,
+                               area.getY() + y * cellH,
+                               cellW, cellH);
+            ++x;
+        }
     }
     else
     {
@@ -996,5 +975,223 @@ void NativeNamPanel::mouseDown (const juce::MouseEvent& e)
         || (e.eventComponent == &t3kPage && t3kSearch.getBounds().contains (e.getEventRelativeTo (&t3kPage).getPosition())))
     {
         openSearchKeyboard();
+    }
+}
+
+
+//==============================================================================
+NativeNamPanel::ValueOverlay::ValueOverlay()
+{
+    auto& th = Theme::get();
+    titleLab.setJustificationType (juce::Justification::centred);
+    titleLab.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+    titleLab.setColour (juce::Label::textColourId, th.text);
+    titleLab.setText ("Edit value", juce::dontSendNotification);
+    addAndMakeVisible (titleLab);
+
+    editor.setFont (juce::FontOptions (22.0f, juce::Font::bold));
+    editor.setJustification (juce::Justification::centred);
+    editor.setColour (juce::TextEditor::backgroundColourId, th.surfaceAlt);
+    editor.setColour (juce::TextEditor::textColourId, th.text);
+    editor.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+    editor.setColour (juce::TextEditor::focusedOutlineColourId, th.accent);
+    editor.setSelectAllWhenFocused (false);
+    addAndMakeVisible (editor);
+
+    th.applyButton (okBtn, true);
+    th.applyButton (cancelBtn, false);
+    addAndMakeVisible (okBtn);
+    addAndMakeVisible (cancelBtn);
+    addAndMakeVisible (keyboard);
+
+    keyboard.attachEditor (&editor);
+    okBtn.onClick = [this]
+    {
+        if (onDone) onDone (editor.getText());
+    };
+    cancelBtn.onClick = [this] { if (onCancel) onCancel(); };
+    keyboard.onEnter = [this] { if (onDone) onDone (editor.getText()); };
+}
+
+void NativeNamPanel::ValueOverlay::setInitial (const juce::String& t)
+{
+    editor.setText (t, false);
+    editor.selectAll();
+    editor.grabKeyboardFocus();
+}
+
+void NativeNamPanel::ValueOverlay::paint (juce::Graphics& g)
+{
+    auto& th = Theme::get();
+    g.fillAll (th.overlay);
+}
+
+void NativeNamPanel::ValueOverlay::resized()
+{
+    auto r = getLocalBounds().reduced (getWidth() / 18, getHeight() / 14);
+    titleLab.setBounds (r.removeFromTop (28));
+    r.removeFromTop (12);
+    editor.setBounds (r.removeFromTop (52).reduced (r.getWidth() / 10, 0));
+    r.removeFromTop (16);
+    auto actions = r.removeFromTop (44);
+    const int bw = 130;
+    okBtn.setBounds (actions.getCentreX() - bw - 8, actions.getY(), bw, 40);
+    cancelBtn.setBounds (actions.getCentreX() + 8, actions.getY(), bw, 40);
+    r.removeFromTop (12);
+    keyboard.setBounds (r);
+}
+
+NativeNamPanel::MidiOverlay::MidiOverlay()
+{
+    auto& th = Theme::get();
+    setLookAndFeel (&th.softLaf);
+    title.setJustificationType (juce::Justification::centred);
+    title.setFont (juce::FontOptions (18.0f, juce::Font::bold));
+    title.setColour (juce::Label::textColourId, th.text);
+    addAndMakeVisible (title);
+
+    auto prep = [&] (juce::TextButton& b, bool primary = false)
+    {
+        b.setLookAndFeel (&th.softLaf);
+        th.applyButton (b, primary);
+    };
+    prep (learnBtn, true);
+    prep (clearBtn, false);
+    prep (modeInstant, false);
+    prep (modeToggle, false);
+    prep (closeBtn, false);
+    modeInstant.setClickingTogglesState (true);
+    modeToggle.setClickingTogglesState (true);
+    modeInstant.setRadioGroupId (8801);
+    modeToggle.setRadioGroupId (8801);
+    modeInstant.setColour (juce::TextButton::buttonOnColourId, th.accent);
+    modeToggle.setColour (juce::TextButton::buttonOnColourId, th.accent);
+    learnBtn.setButtonText ("LEARN");
+    clearBtn.setButtonText ("Clear MIDI");
+    modeInstant.setButtonText ("Instant / Hold");
+    modeToggle.setButtonText ("Toggle");
+    closeBtn.setButtonText ("Close");
+    for (auto* b : { &learnBtn, &clearBtn, &modeInstant, &modeToggle, &closeBtn })
+        addAndMakeVisible (b);
+}
+
+NativeNamPanel::MidiOverlay::~MidiOverlay()
+{
+    setLookAndFeel (nullptr);
+    for (auto* b : { &learnBtn, &clearBtn, &modeInstant, &modeToggle, &closeBtn })
+        b->setLookAndFeel (nullptr);
+}
+
+void NativeNamPanel::MidiOverlay::paint (juce::Graphics& g)
+{
+    auto& th = Theme::get();
+    g.setColour (th.overlay);
+    g.fillAll();
+    auto card = getLocalBounds().withSizeKeepingCentre (
+        juce::jmin (340, getWidth() - 32),
+        juce::jmin (360, getHeight() - 32)).toFloat();
+    g.setColour (th.surface);
+    g.fillRoundedRectangle (card, 20.0f);
+    g.setColour (th.surfaceAlt.withAlpha (0.9f));
+    g.drawRoundedRectangle (card.reduced (0.5f), 20.0f, 1.0f);
+}
+
+void NativeNamPanel::MidiOverlay::resized()
+{
+    auto c = getLocalBounds().withSizeKeepingCentre (
+        juce::jmin (340, getWidth() - 32),
+        juce::jmin (360, getHeight() - 32)).reduced (18);
+    title.setBounds (c.removeFromTop (40));
+    c.removeFromTop (6);
+    auto slot = [&] (juce::TextButton& b) { b.setBounds (c.removeFromTop (46).reduced (0, 4)); };
+    slot (learnBtn); slot (clearBtn);
+    c.removeFromTop (10);
+    slot (modeInstant); slot (modeToggle);
+    closeBtn.setBounds (c.removeFromBottom (46).reduced (0, 4));
+}
+
+void NativeNamPanel::closeOverlays()
+{
+    valueOverlay.reset();
+    midiOverlay.reset();
+}
+
+void NativeNamPanel::openValueFor (ControlRow* cell)
+{
+    if (cell == nullptr || cell->parameter == nullptr || cell->isToggle) return;
+    closeOverlays();
+    auto* ov = new ValueOverlay();
+    valueOverlay.reset (ov);
+    ov->setInitial (cell->parameter->getText (cell->parameter->getValue(), 24));
+    juce::Component::SafePointer<NativeNamPanel> safe (this);
+    juce::Component::SafePointer<ControlRow> safeCell (cell);
+    ov->onDone = [safe, safeCell] (juce::String text)
+    {
+        if (safe == nullptr) return;
+        if (safeCell != nullptr && safeCell->parameter != nullptr)
+        {
+            // Try parse as normalised or use text conversion
+            auto* p = safeCell->parameter;
+            const float v = p->getValueForText (text);
+            p->setValueNotifyingHost (v);
+            safeCell->syncFromParam();
+        }
+        safe->closeOverlays();
+    };
+    ov->onCancel = [safe] { if (safe != nullptr) safe->closeOverlays(); };
+    if (auto* parent = getTopLevelComponent())
+    {
+        parent->addAndMakeVisible (ov);
+        ov->setBounds (parent->getLocalBounds());
+        ov->toFront (true);
+    }
+}
+
+void NativeNamPanel::openMidiFor (ControlRow* cell)
+{
+    if (cell == nullptr) return;
+    closeOverlays();
+    auto* pop = new MidiOverlay();
+    midiOverlay.reset (pop);
+    pop->title.setText (cell->nameLabel.getText(), juce::dontSendNotification);
+    const auto mode = midiLearn.getBindingMode (cell->pluginIndex, cell->paramIndex);
+    pop->modeInstant.setToggleState (mode == MidiLearnManager::MidiMode::Instant, juce::dontSendNotification);
+    pop->modeToggle.setToggleState (mode == MidiLearnManager::MidiMode::Toggle, juce::dontSendNotification);
+
+    juce::Component::SafePointer<NativeNamPanel> safe (this);
+    juce::Component::SafePointer<ControlRow> safeCell (cell);
+    pop->learnBtn.onClick = [safe, safeCell]
+    {
+        if (safe == nullptr || safeCell == nullptr) return;
+        safe->midiLearn.startLearn (safeCell->pluginIndex, safeCell->paramIndex);
+        safeCell->updateLearnButton();
+        safe->closeOverlays();
+    };
+    pop->clearBtn.onClick = [safe, safeCell]
+    {
+        if (safe == nullptr || safeCell == nullptr) return;
+        safe->midiLearn.clearBinding (safeCell->pluginIndex, safeCell->paramIndex);
+        safeCell->updateLearnButton();
+        safe->closeOverlays();
+    };
+    pop->modeInstant.onClick = [safe, safeCell]
+    {
+        if (safe == nullptr || safeCell == nullptr) return;
+        safe->midiLearn.setBindingMode (safeCell->pluginIndex, safeCell->paramIndex,
+                                        MidiLearnManager::MidiMode::Instant);
+    };
+    pop->modeToggle.onClick = [safe, safeCell]
+    {
+        if (safe == nullptr || safeCell == nullptr) return;
+        safe->midiLearn.setBindingMode (safeCell->pluginIndex, safeCell->paramIndex,
+                                        MidiLearnManager::MidiMode::Toggle);
+    };
+    pop->closeBtn.onClick = [safe] { if (safe != nullptr) safe->closeOverlays(); };
+
+    if (auto* parent = getTopLevelComponent())
+    {
+        parent->addAndMakeVisible (pop);
+        pop->setBounds (parent->getLocalBounds());
+        pop->toFront (true);
     }
 }

@@ -34,29 +34,96 @@ private:
     void refreshMidiButtons();
     void applyTheme();
 
-    /** Compact control row: name + value on top, slider below, optional MIDI LEARN/X. */
-    struct ControlRow : public juce::Component
+    /** Parameter cell matching ParameterPanel (knob / switch, MIDI popup, value edit). */
+    struct ControlRow : public juce::Component, public juce::Slider::Listener
     {
         ControlRow (const juce::String& name, juce::AudioProcessorParameter* param,
                     MidiLearnManager& mgr, int pluginIdx, int paramIdx,
-                    bool showMidiButtons = false);
+                    std::function<void(ControlRow*)> onMidi,
+                    std::function<void(ControlRow*)> onValue);
         void paint (juce::Graphics&) override;
         void resized() override;
+        void sliderValueChanged (juce::Slider*) override;
         void updateLearnButton();
         void syncFromParam();
+        void mouseDown (const juce::MouseEvent&) override;
 
         juce::Label nameLabel;
         juce::Label valueLabel;
-        juce::Slider slider;
-        juce::ToggleButton toggle;
-        juce::TextButton learnBtn { "LEARN" }, clearBtn { "X" };
+        juce::Slider knob;
+        juce::TextButton resetBtn;
+        class MiniSwitch : public juce::Component
+        {
+        public:
+            std::function<void(bool)> onChange;
+            void setOn (bool v, juce::NotificationType n = juce::sendNotification)
+            {
+                if (on == v) return;
+                on = v; repaint();
+                if (n != juce::dontSendNotification && onChange) onChange (on);
+            }
+            bool isOn() const { return on; }
+            void paint (juce::Graphics& g) override
+            {
+                auto& th = Theme::get();
+                auto r = getLocalBounds().toFloat().reduced (2.0f, 4.0f);
+                const float h = juce::jmin (r.getHeight(), 28.0f);
+                const float w = juce::jmin (r.getWidth(), 52.0f);
+                r = r.withSizeKeepingCentre (w, h);
+                g.setColour (on ? th.accent : th.surfaceAlt);
+                g.fillRoundedRectangle (r, h * 0.5f);
+                const float pad = 3.0f, d = h - pad * 2.0f;
+                const float x = on ? (r.getRight() - pad - d) : (r.getX() + pad);
+                g.setColour (juce::Colours::white);
+                g.fillEllipse (x, r.getY() + pad, d, d);
+            }
+            void mouseDown (const juce::MouseEvent&) override { setOn (! on); }
+        private:
+            bool on = false;
+        } switchToggle;
+
         juce::AudioProcessorParameter* parameter = nullptr;
         MidiLearnManager& learnManager;
         int pluginIndex = -1;
         int paramIndex = -1;
         bool isToggle = false;
-        bool showMidi = false;
+        float defaultNorm = 0.0f;
+        std::function<void(ControlRow*)> openMidi;
+        std::function<void(ControlRow*)> openValue;
     };
+
+    void openMidiFor (ControlRow* cell);
+    void openValueFor (ControlRow* cell);
+    void closeOverlays();
+
+    // Reuse same overlay UX as ParameterPanel
+    class ValueOverlay : public juce::Component
+    {
+    public:
+        ValueOverlay();
+        void setInitial (const juce::String& t);
+        void resized() override;
+        void paint (juce::Graphics&) override;
+        juce::Label titleLab;
+        juce::TextEditor editor;
+        juce::TextButton okBtn { "OK" }, cancelBtn { "CANCEL" };
+        OnScreenKeyboard keyboard;
+        std::function<void(juce::String)> onDone;
+        std::function<void()> onCancel;
+    };
+    class MidiOverlay : public juce::Component
+    {
+    public:
+        MidiOverlay();
+        ~MidiOverlay() override;
+        void paint (juce::Graphics&) override;
+        void resized() override;
+        juce::Label title;
+        juce::TextButton learnBtn, clearBtn, closeBtn;
+        juce::TextButton modeInstant, modeToggle;
+    };
+    std::unique_ptr<ValueOverlay> valueOverlay;
+    std::unique_ptr<MidiOverlay> midiOverlay;
 
     NativeNamProcessor& processor;
     MidiLearnManager& midiLearn;

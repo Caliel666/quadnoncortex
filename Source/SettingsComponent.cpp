@@ -149,7 +149,6 @@ SettingsComponent::SettingsComponent (AudioEngine& engine, MidiLearnManager& lea
         auto* row = mapRows.add (new MapRow (a, l, midiLearn));
         midiPage.addAndMakeVisible (row);
     };
-    addMap ("tuner", "Tuner toggle");
     addMap ("presetNext", "Preset next");
     addMap ("presetPrev", "Preset previous");
     addAndMakeVisible (midiPage);

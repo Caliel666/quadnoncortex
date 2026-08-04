@@ -14,33 +14,50 @@ void MidiLearnManager::applyBinding (const Binding& b, float normalisedValue, co
         const int  key  = makeKey (b.midiChannel, num, isCC);
         const auto now  = juce::Time::getMillisecondCounter();
 
-        // ---- TUNER: absolute like a parameter (ON = tuner, OFF = board) ----
+        // ---- TUNER ----
         if (b.globalAction == "tuner")
         {
-            bool on = false;
-            if (msg.isController()
-                || msg.isNoteOff()
-                || (msg.isNoteOn() && msg.getVelocity() == 0))
-                on = normalisedValue >= 0.5f;
-            else if (msg.isNoteOn())
-                on = true;
+            float v = normalisedValue;
+            if (b.mode == MidiMode::Toggle)
+            {
+                bool fire = false;
+                if (msg.isController())
+                {
+                    if (normalisedValue >= 0.5f) fire = acceptToggleEdge (b, true);
+                    else acceptToggleEdge (b, false);
+                }
+                else if (msg.isNoteOn() && msg.getVelocity() > 0)
+                    fire = acceptToggleEdge (b, true);
+                else if (msg.isNoteOff() || (msg.isNoteOn() && msg.getVelocity() == 0))
+                {
+                    acceptToggleEdge (b, false);
+                    return;
+                }
+                else return;
+                if (! fire) return;
+                // Flip: we don't know current tab here — host handles as toggle pulse
+                v = 1.0f; // pulse; MainComponent toggles tab on any >=0.5 in Toggle mode
+            }
             else
-                return;
+            {
+                if (msg.isController() || msg.isNoteOff()
+                    || (msg.isNoteOn() && msg.getVelocity() == 0))
+                    v = normalisedValue >= 0.5f ? 1.0f : 0.0f;
+                else if (msg.isNoteOn())
+                    v = 1.0f;
+                else return;
 
-            // Debounce only identical rapid packets
-            auto it = lastToggleState.find (key);
-            const int want = on ? 1 : 0;
-            if (it != lastToggleState.end()
-                && it->second.value == want
-                && (now - it->second.ms) < 80)
-                return;
+                auto it = lastToggleState.find (key);
+                const int want = v >= 0.5f ? 1 : 0;
+                if (it != lastToggleState.end() && it->second.value == want && (now - it->second.ms) < 80)
+                    return;
+                lastToggleState[key] = { want, now };
+            }
 
-            lastToggleState[key] = { want, now };
-
-            juce::MessageManager::callAsync ([this, on]
+            juce::MessageManager::callAsync ([this, v, mode = b.mode]
             {
                 if (onGlobalAction)
-                    onGlobalAction ("tuner", on ? 1.0f : 0.0f);
+                    onGlobalAction (mode == MidiMode::Toggle ? "tunerToggle" : "tuner", v);
             });
             return;
         }
@@ -87,6 +104,36 @@ void MidiLearnManager::applyBinding (const Binding& b, float normalisedValue, co
         const int idx = b.pluginIndex;
         bool bypassOn = false;
 
+        if (b.mode == MidiMode::Toggle)
+        {
+            bool fire = false;
+            if (msg.isController())
+            {
+                if (normalisedValue >= 0.5f) fire = acceptToggleEdge (b, true);
+                else acceptToggleEdge (b, false);
+            }
+            else if (msg.isNoteOn() && msg.getVelocity() > 0)
+                fire = acceptToggleEdge (b, true);
+            else if (msg.isNoteOff() || (msg.isNoteOn() && msg.getVelocity() == 0))
+            {
+                acceptToggleEdge (b, false);
+                return;
+            }
+            else return;
+            if (! fire) return;
+
+            juce::MessageManager::callAsync ([this, idx]
+            {
+                if (pluginChain == nullptr) return;
+                if (! juce::isPositiveAndBelow (idx, pluginChain->getNumPlugins())) return;
+                const bool next = ! pluginChain->isBypassed (idx);
+                pluginChain->setBypass (idx, next);
+                if (onParamChangedByMidi)
+                    onParamChangedByMidi (idx, -2, next ? 1.0f : 0.0f);
+            });
+            return;
+        }
+
         if (msg.isController() || msg.isNoteOff()
             || (msg.isNoteOn() && msg.getVelocity() == 0))
             bypassOn = normalisedValue >= 0.5f;
@@ -108,7 +155,7 @@ void MidiLearnManager::applyBinding (const Binding& b, float normalisedValue, co
     }
 
     // -------------------------------------------------------------------------
-    // PARAMETERS — every message applies the value
+    // PARAMETERS — Instant follows value; Toggle flips once per press
     // -------------------------------------------------------------------------
     if (auto* instance = pluginChain->getPluginInstance (b.pluginIndex))
     {
@@ -119,8 +166,41 @@ void MidiLearnManager::applyBinding (const Binding& b, float normalisedValue, co
         if (auto* param = params[b.paramIndex])
         {
             float v = normalisedValue;
-            if (param->isBoolean() || param->getNumSteps() == 2)
-                v = normalisedValue >= 0.5f ? 1.0f : 0.0f;
+
+            if (b.mode == MidiMode::Toggle)
+            {
+                // Rising edge only — works with hold/momentary hardware.
+                // Use Toggle mode in the UI when you want one flip per press.
+                bool fire = false;
+                if (msg.isController())
+                {
+                    if (normalisedValue >= 0.5f)
+                        fire = acceptToggleEdge (b, true);
+                    else
+                        acceptToggleEdge (b, false);
+                }
+                else if (msg.isNoteOn() && msg.getVelocity() > 0)
+                    fire = acceptToggleEdge (b, true);
+                else if (msg.isNoteOff() || (msg.isNoteOn() && msg.getVelocity() == 0))
+                {
+                    acceptToggleEdge (b, false);
+                    return;
+                }
+                else
+                    return;
+
+                if (! fire)
+                    return;
+
+                const float cur = param->getValue();
+                v = cur >= 0.5f ? 0.0f : 1.0f;
+            }
+            else
+            {
+                // Instant / Hold: follow the control value
+                if (param->isBoolean() || param->getNumSteps() == 2)
+                    v = normalisedValue >= 0.5f ? 1.0f : 0.0f;
+            }
 
             try
             {
@@ -154,6 +234,7 @@ void MidiLearnManager::saveGlobalsToSettings() const
         e->setAttribute ("channel", pair.second.midiChannel);
         e->setAttribute ("cc",      pair.second.ccNumber);
         e->setAttribute ("note",    pair.second.noteNumber);
+        e->setAttribute ("mode",    pair.second.mode == MidiMode::Toggle ? "toggle" : "instant");
     }
     AppSettings::get().globalMidiXml = std::move (xml);
     AppSettings::get().save();
@@ -171,6 +252,8 @@ void MidiLearnManager::loadGlobalsFromSettings()
         b.midiChannel  = e->getIntAttribute ("channel");
         b.ccNumber     = e->getIntAttribute ("cc", -1);
         b.noteNumber   = e->getIntAttribute ("note", -1);
+        b.mode = e->getStringAttribute ("mode") == "toggle" ? MidiMode::Toggle
+                                                            : MidiMode::Instant;
         b.pluginIndex  = -1;
         b.paramIndex   = -1;
         if (b.globalAction.isEmpty()) continue;

@@ -116,8 +116,9 @@ void PluginBlockComponent::mouseUp (const juce::MouseEvent& e)
 
     if (draggingBypass)
     {
-        if (bypassBounds.contains (e.getPosition()) && onBypassToggled)
-            onBypassToggled (pluginIndex);
+        // Single press on block bypass → MIDI popup (toggle bypass via parameter header)
+        if (bypassBounds.contains (e.getPosition()) && onBypassMidiRequested)
+            onBypassMidiRequested (pluginIndex);
         draggingBypass = false;
         return;
     }

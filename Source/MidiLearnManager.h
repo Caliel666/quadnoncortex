@@ -9,6 +9,8 @@ class PluginChain;
 class MidiLearnManager : public juce::MidiInputCallback
 {
 public:
+    enum class MidiMode { Instant, Toggle };
+
     struct Binding
     {
         int pluginIndex = -1;  // -1 = global action
@@ -17,6 +19,7 @@ public:
         int midiChannel = 0;
         int ccNumber    = -1;
         int noteNumber  = -1;
+        MidiMode mode = MidiMode::Instant;
     };
 
     MidiLearnManager() = default;
@@ -160,6 +163,27 @@ public:
 
     const std::map<int, Binding>& getAllBindings() const { return bindings; }
 
+    MidiMode getBindingMode (int pluginIndex, int paramIndex) const
+    {
+        for (const auto& pair : bindings)
+            if (pair.second.pluginIndex == pluginIndex && pair.second.paramIndex == paramIndex
+                && pair.second.globalAction.isEmpty())
+                return pair.second.mode;
+        return MidiMode::Instant;
+    }
+
+    void setBindingMode (int pluginIndex, int paramIndex, MidiMode mode)
+    {
+        for (auto& pair : bindings)
+            if (pair.second.pluginIndex == pluginIndex && pair.second.paramIndex == paramIndex
+                && pair.second.globalAction.isEmpty())
+            {
+                pair.second.mode = mode;
+                if (onBindingsChanged) onBindingsChanged();
+                return;
+            }
+    }
+
     void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& message) override
     {
         if (message.isController())
@@ -212,6 +236,7 @@ public:
             e->setAttribute ("channel", pair.second.midiChannel);
             e->setAttribute ("cc",      pair.second.ccNumber);
             e->setAttribute ("note",    pair.second.noteNumber);
+            e->setAttribute ("mode",    pair.second.mode == MidiMode::Toggle ? "toggle" : "instant");
         }
     }
 
@@ -237,6 +262,8 @@ public:
                 b.midiChannel  = e->getIntAttribute ("channel");
                 b.ccNumber     = e->getIntAttribute ("cc", -1);
                 b.noteNumber   = e->getIntAttribute ("note", -1);
+                b.mode = e->getStringAttribute ("mode") == "toggle" ? MidiMode::Toggle
+                                                                    : MidiMode::Instant;
                 if (b.globalAction.isNotEmpty())
                     continue; // globals never from presets
                 const bool isCC = b.ccNumber >= 0;
@@ -267,6 +294,7 @@ private:
     /** Rising-edge + debounce so a single footswitch press toggles once (not cancelled by doubles). */
     bool acceptToggleEdge (const Binding& b, bool activeHigh)
     {
+        // Rising-edge only (momentary / Instant companion)
         const bool isCC = b.ccNumber >= 0;
         const int num = isCC ? b.ccNumber : b.noteNumber;
         const int key = makeKey (b.midiChannel, num, isCC);
@@ -276,23 +304,48 @@ private:
         const int prev = (it != lastToggleState.end()) ? it->second.value : 0;
         const juce::uint32 prevMs = (it != lastToggleState.end()) ? it->second.ms : 0;
 
+        if (it != lastToggleState.end() && it->second.value == (activeHigh ? 1 : 0)
+            && (now - prevMs) < 40)
+            return false;
+
         EdgeState st;
         st.value = activeHigh ? 1 : 0;
         st.ms = now;
         lastToggleState[key] = st;
 
         if (! activeHigh)
-            return false; // falling edge — ignore
-
-        // Debounce: ignore second rising edge within 100ms (duplicate MIDI)
-        if (prev == 1 && (now - prevMs) < 100)
             return false;
+        if (prev != 0)
+            return false;
+        return true;
+    }
 
-        // Rising edge: was low (or never seen), now high
-        if (prev == 0 || (now - prevMs) >= 100)
-            return true;
+    /** Latching footswitch friendly: any value change (0↔127) is one toggle press. */
+    bool acceptAnyChange (const Binding& b, float normalised)
+    {
+        const bool isCC = b.ccNumber >= 0;
+        const int num = isCC ? b.ccNumber : b.noteNumber;
+        const int key = makeKey (b.midiChannel, num, isCC);
+        const auto now = juce::Time::getMillisecondCounter();
+        const int quantized = normalised >= 0.5f ? 1 : 0;
 
-        return false;
+        auto it = lastToggleState.find (key);
+        if (it != lastToggleState.end())
+        {
+            if (it->second.value == quantized && (now - it->second.ms) < 40)
+                return false; // duplicate
+            if (it->second.value == quantized)
+                return false; // same level, no edge
+        }
+
+        EdgeState st;
+        st.value = quantized;
+        st.ms = now;
+        lastToggleState[key] = st;
+        // First message seeds state without flipping (avoids power-on glitch)
+        if (it == lastToggleState.end())
+            return false;
+        return true;
     }
 
     struct EdgeState { int value = 0; juce::uint32 ms = 0; };
