@@ -59,8 +59,17 @@ private:
     juce::OwnedArray<MapRow> mapRows;
     juce::Component midiPage;
 
-    // ---- Theme page ----
+    // ---- Theme / General page ----
     juce::Component themePage;
+    juce::Label windowTitle;
+    juce::Label modeLabel;
+    juce::TextButton modeFullscreen { "FULLSCREEN" };
+    juce::TextButton modeWindowed   { "WINDOWED" };
+    juce::Label resLabel;
+    juce::ComboBox resolutionBox;   // fullscreen resolution
+    juce::Label winSizeLabel;
+    juce::ComboBox windowedSizeBox; // windowed size
+    juce::TextButton applyWindowBtn { "APPLY WINDOW" };
     juce::Label themeTitle, themeHint;
     juce::ComboBox themeBox;
     juce::TextButton applyThemeBtn { "APPLY" };
@@ -68,6 +77,8 @@ private:
     juce::Label versionLabel;
     juce::Label updateStatus;
     void checkForUpdates();
+    void refreshWindowControls();
+    void applyWindowFromUi();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SettingsComponent)
 };

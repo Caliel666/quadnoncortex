@@ -49,6 +49,11 @@ public:
             outputGain = (float) xml->getDoubleAttribute ("outputGain", 1.0);
             lastPreset = xml->getStringAttribute ("lastPreset");
             themeName = xml->getStringAttribute ("theme", "Dark");
+            windowFullscreen = xml->getBoolAttribute ("windowFullscreen", true);
+            windowedWidth  = xml->getIntAttribute ("windowedWidth",  1024);
+            windowedHeight = xml->getIntAttribute ("windowedHeight", 600);
+            fullscreenWidth  = xml->getIntAttribute ("fullscreenWidth",  0);  // 0 = native
+            fullscreenHeight = xml->getIntAttribute ("fullscreenHeight", 0);
 
             globalMidiMaps.clear();
             if (auto* maps = xml->getChildByName ("GlobalMidiMaps"))
@@ -83,6 +88,11 @@ public:
         root.setAttribute ("outputGain", outputGain);
         root.setAttribute ("lastPreset", lastPreset);
         root.setAttribute ("theme", themeName);
+        root.setAttribute ("windowFullscreen", windowFullscreen ? 1 : 0);
+        root.setAttribute ("windowedWidth",  windowedWidth);
+        root.setAttribute ("windowedHeight", windowedHeight);
+        root.setAttribute ("fullscreenWidth",  fullscreenWidth);
+        root.setAttribute ("fullscreenHeight", fullscreenHeight);
 
         auto* maps = root.createNewChildElement ("GlobalMidiMaps");
         for (auto& p : globalMidiMaps)
@@ -117,6 +127,16 @@ public:
     float outputGain = 1.0f;
     juce::String lastPreset;
     juce::String themeName { "Dark" };
+
+    /** true = borderless fullscreen (default); false = windowed */
+    bool windowFullscreen = true;
+    /** Windowed size (default ~600p) */
+    int windowedWidth  = 1024;
+    int windowedHeight = 600;
+    /** Fullscreen size; 0x0 = use native display size */
+    int fullscreenWidth  = 0;
+    int fullscreenHeight = 0;
+
     std::map<juce::String, juce::String> globalMidiMaps;
     /** identifier → enabled. Missing devices kept until next explicit save. */
     std::map<juce::String, bool> midiInputEnabled;

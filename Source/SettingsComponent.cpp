@@ -154,7 +154,67 @@ SettingsComponent::SettingsComponent (AudioEngine& engine, MidiLearnManager& lea
     addAndMakeVisible (midiPage);
     midiPage.setVisible (false);
 
-    // ---- Theme ----
+    // ---- Theme / General ----
+    windowTitle.setText ("Window", juce::dontSendNotification);
+    windowTitle.setFont (juce::FontOptions (20.0f, juce::Font::bold));
+    windowTitle.setColour (juce::Label::textColourId, th.text);
+    themePage.addAndMakeVisible (windowTitle);
+
+    modeLabel.setText ("Mode", juce::dontSendNotification);
+    modeLabel.setColour (juce::Label::textColourId, th.textDim);
+    modeLabel.setFont (juce::FontOptions (14.0f));
+    themePage.addAndMakeVisible (modeLabel);
+
+    modeFullscreen.setClickingTogglesState (true);
+    modeWindowed.setClickingTogglesState (true);
+    modeFullscreen.setRadioGroupId (91);
+    modeWindowed.setRadioGroupId (91);
+    th.applyToggleTab (modeFullscreen, true);
+    th.applyToggleTab (modeWindowed, false);
+    modeFullscreen.onClick = [this]
+    {
+        AppSettings::get().windowFullscreen = true;
+        refreshWindowControls();
+    };
+    modeWindowed.onClick = [this]
+    {
+        AppSettings::get().windowFullscreen = false;
+        refreshWindowControls();
+    };
+    themePage.addAndMakeVisible (modeFullscreen);
+    themePage.addAndMakeVisible (modeWindowed);
+
+    resLabel.setText ("Fullscreen size", juce::dontSendNotification);
+    resLabel.setColour (juce::Label::textColourId, th.textDim);
+    resLabel.setFont (juce::FontOptions (14.0f));
+    themePage.addAndMakeVisible (resLabel);
+    resolutionBox.addItem ("Native (display)", 1);
+    resolutionBox.addItem ("1280 x 720", 2);
+    resolutionBox.addItem ("1280 x 800", 3);
+    resolutionBox.addItem ("1366 x 768", 4);
+    resolutionBox.addItem ("1600 x 900", 5);
+    resolutionBox.addItem ("1920 x 1080", 6);
+    resolutionBox.addItem ("2560 x 1440", 7);
+    resolutionBox.setSelectedId (1, juce::dontSendNotification);
+    themePage.addAndMakeVisible (resolutionBox);
+
+    winSizeLabel.setText ("Windowed size", juce::dontSendNotification);
+    winSizeLabel.setColour (juce::Label::textColourId, th.textDim);
+    winSizeLabel.setFont (juce::FontOptions (14.0f));
+    themePage.addAndMakeVisible (winSizeLabel);
+    windowedSizeBox.addItem ("1024 x 600  (600p)", 1);
+    windowedSizeBox.addItem ("1280 x 720", 2);
+    windowedSizeBox.addItem ("1280 x 800", 3);
+    windowedSizeBox.addItem ("1366 x 768", 4);
+    windowedSizeBox.addItem ("1600 x 900", 5);
+    windowedSizeBox.addItem ("1920 x 1080", 6);
+    windowedSizeBox.setSelectedId (1, juce::dontSendNotification);
+    themePage.addAndMakeVisible (windowedSizeBox);
+
+    th.applyButton (applyWindowBtn, true);
+    applyWindowBtn.onClick = [this] { applyWindowFromUi(); };
+    themePage.addAndMakeVisible (applyWindowBtn);
+
     themeTitle.setText ("Appearance", juce::dontSendNotification);
     themeTitle.setFont (juce::FontOptions (20.0f, juce::Font::bold));
     themeTitle.setColour (juce::Label::textColourId, th.text);
@@ -198,12 +258,15 @@ SettingsComponent::SettingsComponent (AudioEngine& engine, MidiLearnManager& lea
     addAndMakeVisible (themePage);
     themePage.setVisible (false);
     refreshThemeList();
+    refreshWindowControls();
 
     th.applyButton (saveButton, true);
     saveButton.onClick = [this]
     {
         audioEngine.saveDeviceState();
         AppSettings::get().themeName = Theme::get().currentName;
+        // Keep window fields in sync if user changed combos without APPLY WINDOW
+        applyWindowFromUi();
         AppSettings::get().save();
         saveButton.setButtonText ("SAVED");
         juce::Timer::callAfterDelay (1200, [this]
@@ -321,6 +384,20 @@ void SettingsComponent::applyThemeColours()
     versionLabel.setColour (juce::Label::textColourId, th.text);
     updateStatus.setColour (juce::Label::textColourId, th.textDim);
     th.applyButton (updateBtn, true);
+    th.applyButton (applyWindowBtn, true);
+    windowTitle.setColour (juce::Label::textColourId, th.text);
+    modeLabel.setColour (juce::Label::textColourId, th.textDim);
+    resLabel.setColour (juce::Label::textColourId, th.textDim);
+    winSizeLabel.setColour (juce::Label::textColourId, th.textDim);
+    th.applyToggleTab (modeFullscreen, AppSettings::get().windowFullscreen);
+    th.applyToggleTab (modeWindowed, ! AppSettings::get().windowFullscreen);
+    for (auto* box : { &resolutionBox, &windowedSizeBox, &themeBox })
+    {
+        box->setColour (juce::ComboBox::backgroundColourId, th.surfaceAlt);
+        box->setColour (juce::ComboBox::textColourId, th.text);
+        box->setColour (juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
+        box->setColour (juce::ComboBox::arrowColourId, th.textDim);
+    }
 
     themeBox.setColour (juce::ComboBox::backgroundColourId, th.surfaceAlt);
     themeBox.setColour (juce::ComboBox::textColourId, th.text);
@@ -350,6 +427,71 @@ void SettingsComponent::setTab (int t)
     tabTheme.setToggleState (t == 2, juce::dontSendNotification);
     applyThemeColours();
     resized();
+}
+
+
+void SettingsComponent::refreshWindowControls()
+{
+    auto& s = AppSettings::get();
+    modeFullscreen.setToggleState (s.windowFullscreen, juce::dontSendNotification);
+    modeWindowed.setToggleState (! s.windowFullscreen, juce::dontSendNotification);
+    Theme::get().applyToggleTab (modeFullscreen, s.windowFullscreen);
+    Theme::get().applyToggleTab (modeWindowed, ! s.windowFullscreen);
+
+    int fsId = 1;
+    if (s.fullscreenWidth == 1280 && s.fullscreenHeight == 720) fsId = 2;
+    else if (s.fullscreenWidth == 1280 && s.fullscreenHeight == 800) fsId = 3;
+    else if (s.fullscreenWidth == 1366 && s.fullscreenHeight == 768) fsId = 4;
+    else if (s.fullscreenWidth == 1600 && s.fullscreenHeight == 900) fsId = 5;
+    else if (s.fullscreenWidth == 1920 && s.fullscreenHeight == 1080) fsId = 6;
+    else if (s.fullscreenWidth == 2560 && s.fullscreenHeight == 1440) fsId = 7;
+    resolutionBox.setSelectedId (fsId, juce::dontSendNotification);
+
+    int winId = 1;
+    if (s.windowedWidth == 1280 && s.windowedHeight == 720) winId = 2;
+    else if (s.windowedWidth == 1280 && s.windowedHeight == 800) winId = 3;
+    else if (s.windowedWidth == 1366 && s.windowedHeight == 768) winId = 4;
+    else if (s.windowedWidth == 1600 && s.windowedHeight == 900) winId = 5;
+    else if (s.windowedWidth == 1920 && s.windowedHeight == 1080) winId = 6;
+    windowedSizeBox.setSelectedId (winId, juce::dontSendNotification);
+
+    resolutionBox.setEnabled (s.windowFullscreen);
+    windowedSizeBox.setEnabled (! s.windowFullscreen);
+}
+
+void applyAppWindowSettings(); // Main.cpp
+
+void SettingsComponent::applyWindowFromUi()
+{
+    auto& s = AppSettings::get();
+    s.windowFullscreen = modeFullscreen.getToggleState();
+
+    switch (resolutionBox.getSelectedId())
+    {
+        case 2: s.fullscreenWidth = 1280; s.fullscreenHeight = 720; break;
+        case 3: s.fullscreenWidth = 1280; s.fullscreenHeight = 800; break;
+        case 4: s.fullscreenWidth = 1366; s.fullscreenHeight = 768; break;
+        case 5: s.fullscreenWidth = 1600; s.fullscreenHeight = 900; break;
+        case 6: s.fullscreenWidth = 1920; s.fullscreenHeight = 1080; break;
+        case 7: s.fullscreenWidth = 2560; s.fullscreenHeight = 1440; break;
+        default: s.fullscreenWidth = 0; s.fullscreenHeight = 0; break;
+    }
+    switch (windowedSizeBox.getSelectedId())
+    {
+        case 2: s.windowedWidth = 1280; s.windowedHeight = 720; break;
+        case 3: s.windowedWidth = 1280; s.windowedHeight = 800; break;
+        case 4: s.windowedWidth = 1366; s.windowedHeight = 768; break;
+        case 5: s.windowedWidth = 1600; s.windowedHeight = 900; break;
+        case 6: s.windowedWidth = 1920; s.windowedHeight = 1080; break;
+        default: s.windowedWidth = 1024; s.windowedHeight = 600; break;
+    }
+    s.save();
+    applyAppWindowSettings();
+    applyWindowBtn.setButtonText ("APPLIED");
+    juce::Timer::callAfterDelay (1000, [safe = juce::Component::SafePointer<SettingsComponent> (this)]
+    {
+        if (safe != nullptr) safe->applyWindowBtn.setButtonText ("APPLY WINDOW");
+    });
 }
 
 void SettingsComponent::checkForUpdates()
@@ -472,13 +614,32 @@ void SettingsComponent::resized()
     {
         themePage.setBounds (r);
         auto m = themePage.getLocalBounds();
-        themeTitle.setBounds (m.removeFromTop (32));
-        themeHint.setBounds (m.removeFromTop (44));
+
+        // Window controls (top)
+        windowTitle.setBounds (m.removeFromTop (28));
+        m.removeFromTop (6);
+        modeLabel.setBounds (m.removeFromTop (22));
+        auto modeRow = m.removeFromTop (48);
+        modeFullscreen.setBounds (modeRow.removeFromLeft (modeRow.getWidth() / 2).reduced (4));
+        modeWindowed.setBounds (modeRow.reduced (4));
+        m.removeFromTop (10);
+        resLabel.setBounds (m.removeFromTop (22));
+        resolutionBox.setBounds (m.removeFromTop (44).removeFromLeft (juce::jmin (420, m.getWidth())).reduced (0, 2));
         m.removeFromTop (8);
+        winSizeLabel.setBounds (m.removeFromTop (22));
+        windowedSizeBox.setBounds (m.removeFromTop (44).removeFromLeft (juce::jmin (420, m.getWidth())).reduced (0, 2));
+        m.removeFromTop (10);
+        applyWindowBtn.setBounds (m.removeFromTop (48).withWidth (200));
+        m.removeFromTop (20);
+
+        // Appearance
+        themeTitle.setBounds (m.removeFromTop (28));
+        themeHint.setBounds (m.removeFromTop (40));
+        m.removeFromTop (6);
         auto row = m.removeFromTop (52);
         themeBox.setBounds (row.removeFromLeft (juce::jmin (420, row.getWidth() - 120)).reduced (0, 4));
         applyThemeBtn.setBounds (row.removeFromLeft (100).reduced (8, 4));
-        m.removeFromTop (28);
+        m.removeFromTop (20);
         versionLabel.setBounds (m.removeFromTop (28));
         m.removeFromTop (8);
         updateBtn.setBounds (m.removeFromTop (48).withWidth (220));
