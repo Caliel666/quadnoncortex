@@ -133,6 +133,7 @@ private:
     juce::TextButton tabT3k    { "TONE3000" };
     int currentTab = 0;
     juce::Array<int> dividerXs;
+    int dividerBottomY = 0;
 
     // ---- CONFIG ----
     juce::Viewport configViewport;

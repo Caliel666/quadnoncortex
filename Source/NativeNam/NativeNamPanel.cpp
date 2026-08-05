@@ -752,24 +752,25 @@ void NativeNamPanel::paint (juce::Graphics& g)
     auto& th = Theme::get();
     g.fillAll (th.surface);
 
-    // Vertical section dividers (Pedal | Amp | Cab | Globals) on CONFIG
-    if (currentTab == 0 && ! libOverlay.isVisible() && dividerXs.size() > 0
-        && configViewport.isVisible())
+    // Vertical column dividers aligned with PEDAL | AMP | CAB headers
+    if (currentTab == 0 && ! libOverlay.isVisible() && configViewport.isVisible())
     {
         g.setColour (th.text.withAlpha (0.12f));
-        const auto viewBounds = configViewport.getBounds();
-        const int scrollY = configViewport.getViewPositionY();
+        const auto vb = configViewport.getBounds();
         const int scrollX = configViewport.getViewPositionX();
-        const int top = viewBounds.getY() + 100 - scrollY;
-        const int bot = viewBounds.getBottom() - 8;
+        const int scrollY = configViewport.getViewPositionY();
+        const int top = vb.getY() + 4;
+        // End lines above the global row (content Y → panel Y)
+        int bot = vb.getBottom() - 4;
+        if (dividerBottomY > 0)
+            bot = juce::jmin (bot, vb.getY() + dividerBottomY - scrollY);
         if (bot > top)
         {
             for (auto dx : dividerXs)
             {
-                const int x = viewBounds.getX() + dx - scrollX;
-                if (x > viewBounds.getX() && x < viewBounds.getRight() - 20)
-                    g.drawLine ((float) x, (float) juce::jmax (top, viewBounds.getY() + 4),
-                                (float) x, (float) bot, 1.0f);
+                const int x = vb.getX() + dx - scrollX;
+                if (x > vb.getX() + 2 && x < vb.getRight() - 2)
+                    g.drawLine ((float) x, (float) top, (float) x, (float) bot, 1.0f);
             }
         }
     }
@@ -806,78 +807,117 @@ void NativeNamPanel::resized()
         configViewport.setVisible (true);
         t3kPage.setVisible (false);
 
-        const int viewW = juce::jmax (320, configViewport.getWidth() - 24);
-        constexpr int cellW = 132;
-        constexpr int cellH = 148;
+        const int viewW = juce::jmax (360, configViewport.getWidth() - 24);
+        const int colW  = juce::jmax (1, viewW / 3);
+        constexpr int cellW = 120;
+        constexpr int cellH = 140;
         constexpr int gap = 4;
+        constexpr int headerH = 96;
+        constexpr int pad = 6;
 
         const bool pedalOn = processor.bypassPedalParam == nullptr
                              || processor.bypassPedalParam->get() < 0.5f;
         const bool ampOn   = processor.bypassAmpParam == nullptr
                              || processor.bypassAmpParam->get() < 0.5f;
 
-        // Slot headers
-        auto header = juce::Rectangle<int> (0, 0, viewW, 96);
-        const int colW = juce::jmax (1, viewW / 3);
-        auto layoutSlotHeader = [] (juce::Rectangle<int> c, juce::Label& title, juce::Label& name,
-                                    juce::TextButton& load, juce::TextButton& clear)
+        // Fixed header columns — never move with toggles
         {
-            title.setBounds (c.removeFromTop (18));
-            name.setBounds (c.removeFromTop (22));
-            auto row = c.removeFromTop (36);
-            clear.setBounds (row.removeFromRight (36).reduced (2));
-            load.setBounds (row.reduced (2, 2));
-        };
-        layoutSlotHeader (header.removeFromLeft (colW).reduced (4, 0),
-                          pedalTitle, pedalName, pedalBtn, pedalClear);
-        layoutSlotHeader (header.removeFromLeft (colW).reduced (4, 0),
-                          ampTitle, ampName, ampBtn, ampClear);
-        layoutSlotHeader (header.reduced (4, 0),
-                          cabTitle, cabName, cabBtn, cabClear);
+            auto header = juce::Rectangle<int> (0, 0, viewW, headerH);
+            auto layoutSlotHeader = [] (juce::Rectangle<int> c, juce::Label& title, juce::Label& name,
+                                        juce::TextButton& load, juce::TextButton& clear)
+            {
+                title.setBounds (c.removeFromTop (18));
+                name.setBounds (c.removeFromTop (22));
+                auto row = c.removeFromTop (36);
+                clear.setBounds (row.removeFromRight (36).reduced (2));
+                load.setBounds (row.reduced (2, 2));
+            };
+            layoutSlotHeader (header.removeFromLeft (colW).reduced (4, 0),
+                              pedalTitle, pedalName, pedalBtn, pedalClear);
+            layoutSlotHeader (header.removeFromLeft (colW).reduced (4, 0),
+                              ampTitle, ampName, ampBtn, ampClear);
+            layoutSlotHeader (header.reduced (4, 0),
+                              cabTitle, cabName, cabBtn, cabClear);
+        }
 
-        // One horizontal strip of groups: Pedal | Amp | Cab | Globals
-        int x = 8;
-        const int y = 104;
+        // Vertical dividers locked to column edges (under headers)
         dividerXs.clear();
+        dividerXs.add (colW);
+        dividerXs.add (colW * 2);
 
-        auto place = [&] (ControlRow* row, bool vis)
+        // Place controls horizontally *within* a fixed column, wrapping inside it
+        auto placeInColumn = [&] (int col, const std::vector<std::pair<ControlRow*, bool>>& items) -> int
         {
-            if (row == nullptr) return;
-            row->setVisible (vis);
-            if (! vis) return;
-            row->setBounds (x, y, cellW, cellH);
-            x += cellW + gap;
+            const int colX = col * colW + pad;
+            const int colRight = (col + 1) * colW - pad;
+            int x = colX;
+            int y = headerH + 8;
+            int maxY = y;
+            for (auto& pr : items)
+            {
+                auto* row = pr.first;
+                if (row == nullptr) continue;
+                row->setVisible (pr.second);
+                if (! pr.second) continue;
+                if (x + cellW > colRight && x > colX)
+                {
+                    x = colX;
+                    y += cellH + gap;
+                }
+                row->setBounds (x, y, cellW, cellH);
+                x += cellW + gap;
+                maxY = juce::jmax (maxY, y + cellH);
+            }
+            return maxY;
         };
 
-        // PEDAL group
-        place (bypassPedalRow.get(), true);
-        place (pedalMixRow.get(), pedalOn);
-        dividerXs.add (x + 2);
-        x += 10;
+        // Hide everything first so removed toggles don't leave ghosts
+        for (auto* row : { bypassPedalRow.get(), pedalMixRow.get(),
+                           bypassAmpRow.get(), ampGainRow.get(), ampLowRow.get(),
+                           ampMidRow.get(), ampHighRow.get(), bypassCabRow.get(),
+                           liteRow.get(), inGainRow.get(), outGainRow.get() })
+            if (row != nullptr) row->setVisible (false);
 
-        // AMP group
-        place (bypassAmpRow.get(), true);
-        place (ampGainRow.get(), ampOn);
-        place (ampLowRow.get(), ampOn);
-        place (ampMidRow.get(), ampOn);
-        place (ampHighRow.get(), ampOn);
-        dividerXs.add (x + 2);
-        x += 10;
+        // PEDAL column (under Load Pedal)
+        const int y0 = placeInColumn (0, {
+            { bypassPedalRow.get(), true },
+            { pedalMixRow.get(),    pedalOn },
+        });
+        // AMP column (under Load Amp)
+        const int y1 = placeInColumn (1, {
+            { bypassAmpRow.get(), true },
+            { ampGainRow.get(),   ampOn },
+            { ampLowRow.get(),    ampOn },
+            { ampMidRow.get(),    ampOn },
+            { ampHighRow.get(),   ampOn },
+        });
+        // CAB column (under Load Cab)
+        const int y2 = placeInColumn (2, {
+            { bypassCabRow.get(), true },
+        });
 
-        // CAB group
-        place (bypassCabRow.get(), true);
-        dividerXs.add (x + 2);
-        x += 10;
+        // Stop vertical dividers above the global row
+        dividerBottomY = juce::jmax (y0, juce::jmax (y1, y2)) + 8;
 
-        // GLOBALS
-        place (liteRow.get(), true);
-        place (inGainRow.get(), true);
-        place (outGainRow.get(), true);
+        // GLOBALS pinned below everything — at least under the tallest column,
+        // and pushed to the bottom of the visible panel when there is spare room
+        int yG = juce::jmax (y0, juce::jmax (y1, y2)) + 28;
+        const int viewH = configViewport.getHeight();
+        yG = juce::jmax (yG, viewH - cellH - 20);
+        ControlRow* globals[] = { liteRow.get(), inGainRow.get(), outGainRow.get() };
+        int gx = pad;
+        for (auto* row : globals)
+        {
+            if (row == nullptr) continue;
+            row->setVisible (true);
+            row->setBounds (gx, yG, cellW, cellH);
+            gx += cellW + gap;
+        }
+        yG += cellH + 16;
 
-        const int contentW = juce::jmax (viewW, x + 12);
-        const int contentH = y + cellH + 16;
-        configPage.setSize (contentW, juce::jmax (contentH, configViewport.getHeight()));
+        configPage.setSize (viewW, juce::jmax (yG, viewH));
     }
+
 
     else
     {
